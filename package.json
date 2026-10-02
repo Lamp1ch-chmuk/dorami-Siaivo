@@ -1,10 +1,10 @@
 {
   "name": "siaivo-dorama",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Окрема категорія дорам для Siaivo / Lampa 3.x",
   "scripts": {
-    "check": "node --check siaivo-dorama.js && node --check test.js",
+    "check": "node --check siaivo-dorama.js && node --check d.js && node --check test.js && node --check scripts/refresh-cdn.cjs",
     "test": "npm run check && node test.js && node --test tests/*.test.js",
     "test:browser": "node scripts/browser-smoke.cjs"
   },

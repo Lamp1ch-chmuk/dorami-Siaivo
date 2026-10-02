@@ -9,11 +9,13 @@ const { chromium } = require('playwright');
 
 const appRoot = path.resolve(process.env.SIAIVO_APP_DIR || '/tmp/siaivo-upstream');
 const pluginFile = path.resolve(__dirname, '../siaivo-dorama.js');
+const loaderFile = path.resolve(__dirname, '../d.js');
+const currentVersion = require('../package.json').version;
 const server = http.createServer(async (req, res) => {
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    const file = pathname === '/siaivo-dorama.js' ? pluginFile
+    const file = pathname === '/siaivo-dorama.js' ? pluginFile : pathname === '/d.js' ? loaderFile
         : path.resolve(appRoot, '.' + (pathname === '/' ? '/index.html' : pathname));
-    if (file !== pluginFile && !file.startsWith(appRoot + path.sep)) {
+    if (file !== pluginFile && file !== loaderFile && !file.startsWith(appRoot + path.sep)) {
         res.writeHead(403).end(); return;
     }
     try {
@@ -46,6 +48,10 @@ async function main() {
         const warnings = [];
         let revision = 0;
         let offline = false;
+        let codeOffline = false;
+        let deliveredVersion = currentVersion;
+        const codeRequests = [];
+        const payload = await fs.readFile(pluginFile, 'utf8');
         page.on('pageerror', e => errors.push(e.message));
         page.on('console', e => {
             // Inspect native rendering warnings too: Lampa catches Card exceptions.
@@ -54,6 +60,14 @@ async function main() {
         await page.route('**/*', async route => {
             const url = route.request().url();
             if (url.startsWith(origin + '/')) return route.continue();
+            if (url.startsWith('https://raw.githubusercontent.com/Lamp1ch-chmuk/dorami-Siaivo/main/siaivo-dorama.js')
+                || url.startsWith('https://cdn.jsdelivr.net/gh/Lamp1ch-chmuk/dorami-Siaivo@main/siaivo-dorama.js')) {
+                codeRequests.push(url);
+                if (codeOffline) return route.abort();
+                return route.fulfill({ headers: { 'content-type': 'text/plain; charset=utf-8',
+                    'x-content-type-options': 'nosniff', 'access-control-allow-origin': '*' },
+                    body: payload.replaceAll(currentVersion, deliveredVersion) });
+            }
             if (url.includes('discover/tv')) {
                 if (offline) return route.abort();
                 const query = new URL(url).searchParams;
@@ -95,19 +109,22 @@ async function main() {
             // Other online services are intentionally disabled for this UI test.
             return route.abort();
         });
-        await page.addInitScript(() => {
+        await page.addInitScript(({ pluginUrl }) => {
             localStorage.setItem('language', 'uk');
             localStorage.setItem('tmdb_lang', 'uk-UA');
             localStorage.setItem('account_use', 'false');
-            localStorage.setItem('plugins', '[]');
+            localStorage.setItem('plugins', JSON.stringify([{ url: pluginUrl, status: 1 }]));
             localStorage.setItem('request_caching', 'true');
-        });
+        }, { pluginUrl: origin + '/d.js' });
         await page.goto(origin);
         await page.waitForFunction(() => window.appready === true && window.app_time_launch && window.show_app, null, { timeout: 30000 });
         const version = await page.evaluate(() => Lampa.Manifest.app_version);
-        await page.addScriptTag({ url: origin + '/siaivo-dorama.js' });
         const menu = '[data-action="plugin_siaivo_dorama"]';
+        await page.waitForSelector(menu, { state: 'attached' });
         assert.equal(await page.locator(menu).count(), 1);
+        assert.equal(codeRequests.length, 1, 'one fresh code request per startup');
+        await page.addScriptTag({ url: origin + '/d.js' });
+        assert.equal(codeRequests.length, 1, 'loader reinjection does not download twice');
         await page.locator(menu).dispatchEvent('hover:enter');
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category'
             && Lampa.Activity.active().activity.component.items.length === 4);
@@ -194,9 +211,30 @@ async function main() {
         });
         assert.deepEqual(offlineRows, [20, 20, 20, 20], 'native stale cache survives an upstream outage');
 
+        // Reusing the identical entry after app restart loads newer code, including with
+        // GitHub Raw's real text/plain + nosniff response policy.
+        offline = false;
+        deliveredVersion = '0.5.2'; // synthetic next release fixture
+        await page.reload();
+        await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
+        await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.5.2');
+        assert.equal(await page.locator(menu).count(), 1);
+        assert.equal(codeRequests.length, 2);
+        assert.equal(new URL(codeRequests[0]).pathname, new URL(codeRequests[1]).pathname);
+        assert.notEqual(new URL(codeRequests[0]).search, new URL(codeRequests[1]).search);
+
+        codeOffline = true;
+        await page.reload();
+        await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
+        await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.5.2');
+        assert.equal(await page.locator(menu).count(), 1);
+        assert.equal(codeRequests.length, 3, 'saved newest code used without requesting older CDN');
+
         assert.deepEqual(errors, [], 'uncaught browser errors');
         assert.deepEqual(warnings, [], 'native rendering/task errors');
-        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, TV details, Back, shared cache, TTL expiry and offline fallback; fixture TMDB data');
+        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, TV details, Back, shared cache, TTL expiry, permanent loader update and offline fallback; fixture TMDB/code data');
     } finally { await browser.close(); }
 }
 

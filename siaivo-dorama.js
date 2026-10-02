@@ -1,6 +1,6 @@
 /*
  * Siaivo Dorama for Lampa 3.x / Siaivo
- * Version: 0.5.0
+ * Version: 0.5.1
  *
  * One left-navigation category: "Дорами".
  * Nothing is injected into the home/main screen.
@@ -21,7 +21,7 @@
 
     var PLUGIN_ID = 'siaivo_dorama';
     var SOURCE_ID = 'plugin_siaivo_dorama';
-    var VERSION = '0.5.0';
+    var VERSION = '0.5.1';
     var MENU_ACTION = 'plugin_siaivo_dorama';
     var MENU_TITLE = 'Дорами';
     var KOREA_TIMEZONE = 'Asia/Seoul';

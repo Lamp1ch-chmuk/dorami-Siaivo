@@ -28,5 +28,27 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      - run: cmp siaivo-dorama.js d.js
       - run: npm test
+  refresh-cdn:
+    timeout-minutes: 5
+    needs: regression
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dorama-cdn-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Skip a superseded main revision
+        id: current
+        run: |
+          main_head=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$main_head" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Refresh and verify both CDN files
+        if: steps.current.outputs.current == 'true'
+        run: node scripts/refresh-cdn.cjs
