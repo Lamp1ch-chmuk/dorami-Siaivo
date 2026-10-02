@@ -204,7 +204,7 @@ assert.strictEqual(code.indexOf("with_genres: '10749'"), -1, 'movie-only Romance
 assert.strictEqual(code.indexOf('Lampa.Interaction'), -1, 'deprecated Interaction API must not be used');
 assert.strictEqual(code.indexOf('Lampa.ContentRows'), -1, 'plugin must not inject home/category ContentRows');
 assert.strictEqual(code.indexOf('Lampa.Activity'), -1, 'plugin should use Router rather than patching/directly pushing Activity');
-assert.strictEqual(code.indexOf('Lampa.Storage'), -1, 'plugin must not mutate Siaivo menu/storage state');
+assert.strictEqual(/Lampa\.Storage\.(set|remove|clear)\s*\(/.test(code), false, 'plugin must not mutate Siaivo menu/storage state');
 assert.strictEqual(code.indexOf('Lampa.Lang'), -1, 'menu title must not change with UI language');
 assert.strictEqual(code.indexOf('.apply(console'), -1, 'console host methods must not depend on Function.apply');
 
@@ -303,8 +303,8 @@ allRows.forEach(function (row, index) {
 });
 
 assert.strictEqual(rowCalls[0].cache.life, 60 * 12, 'popular row should use a shorter freshness-aware cache');
-assert.strictEqual(rowCalls[1].cache.life, 60 * 6, 'recent episodes should refresh frequently');
-assert.strictEqual(rowCalls[2].cache.life, 60 * 6, 'ongoing row should refresh frequently');
+assert.strictEqual(rowCalls[1].cache.life, 60 * 2, 'recent episodes should refresh frequently');
+assert.strictEqual(rowCalls[2].cache.life, 60 * 2, 'ongoing row should refresh frequently');
 
 var recentParams = queryParams(rowCalls[1].url);
 var ongoingParams = queryParams(rowCalls[2].url);
@@ -317,7 +317,7 @@ assert.strictEqual(queryParams(rowCalls[0].url).timezone, undefined, 'timezone i
 
 /* Broad dorama catalogs should use Scripted|Miniseries, not force Drama genre 18. */
 assert.strictEqual(queryParams(rowCalls[0].url).with_type, '2|4', 'base dorama filter must include miniseries|scripted');
-assert.strictEqual(queryParams(rowCalls[0].url).without_genres, '16', 'base dorama filter should exclude animation');
+assert.strictEqual(queryParams(rowCalls[0].url).without_genres, '16,99,10763,10764,10767', 'base dorama filter should exclude non-fiction and animation');
 assert.strictEqual(queryParams(rowCalls[0].url).with_genres, undefined, 'base dorama filter must not require Drama genre');
 
 /* Pagination: dated custom route -> public Api.list(TMDb) -> custom route, native cards. */

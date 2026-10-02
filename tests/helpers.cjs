@@ -64,6 +64,18 @@ function harness(options = {}) {
         Router: { call(name, data) { state.routes.push({ name, data }); } },
         Listener: { follow(name, callback) { (state.listeners[name] ||= []).push(callback); } }
     };
+    if (options.catalog) {
+        lampa.TMDB = { key: () => 'fixture', api: method => 'https://tmdb-proxy.test/3/' + method };
+        lampa.Storage = { field: () => options.language || 'uk-UA' };
+        lampa.Reguest = function () {
+            this.timeout = value => { state.timeout = value; };
+            this.clear = () => { state.cleared = (state.cleared || 0) + 1; };
+            this.silent = (url, ok, error, post, extra) => {
+                const query = new URL(url).searchParams;
+                request('catalog', url, { page: Number(query.get('page')), language: query.get('language') }, ok, error, extra.cache);
+            };
+        };
+    }
     function Clock(...args) { return args.length ? new Date(...args) : new Date(state.now); }
     Clock.prototype = Date.prototype;
     const context = vm.createContext({

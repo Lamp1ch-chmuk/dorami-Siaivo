@@ -1,6 +1,6 @@
 /*
  * Siaivo Dorama for Lampa 3.x / Siaivo
- * Version: 0.4.1
+ * Version: 0.5.0
  *
  * One left-navigation category: "Дорами".
  * Nothing is injected into the home/main screen.
@@ -9,8 +9,9 @@
  * - a namespaced custom source owns category rows + category_full pagination;
  * - cards remain source:'tmdb', so details/person/seasons stay native;
  * - category rows are loaded lazily through Lampa.Api.partNext;
- * - first-page rows use TMDB.get() to follow native Lampa cache/filter logic;
- * - category_full uses public Lampa.Api.list(), including Siaivo's own patches;
+ * - a native Reguest + TMDB API catalog avoids unrelated global Discover filters;
+ * - rows and grids share bounded, per-section native caching;
+ * - untranslated titles use an English page fallback, matched by TMDB id;
  * - TMDB responses are copied before row metadata is changed (do not mutate cache);
  * - date-dependent routes contain an anchor date, so pagination remains stable
  *   even if the device crosses midnight while the category is open.
@@ -20,7 +21,7 @@
 
     var PLUGIN_ID = 'siaivo_dorama';
     var SOURCE_ID = 'plugin_siaivo_dorama';
-    var VERSION = '0.4.1';
+    var VERSION = '0.5.0';
     var MENU_ACTION = 'plugin_siaivo_dorama';
     var MENU_TITLE = 'Дорами';
     var KOREA_TIMEZONE = 'Asia/Seoul';
@@ -28,6 +29,9 @@
     var ROOT_ROUTE = 'siaivo-dorama';
     var ROUTE_PREFIX = ROOT_ROUTE + ':';
     var PARTS_LIMIT = 4;
+    var catalogNetwork;
+    var EXCLUDED_GENRES = [16, 99, 10763, 10764, 10767];
+    var FOREIGN_TITLE = /[^\u0000-\u036f\u0400-\u052f\u1e00-\u1eff\u2000-\u2bff\u3000-\u303f\ud800-\udfff\ufe0f]/;
     var DEFAULT_CACHE_LIFE = 60 * 24;
     var START_FLAG = '__' + PLUGIN_ID + '_started';
     var MENU_LISTENER_FLAG = '__' + PLUGIN_ID + '_menu_listener';
@@ -164,7 +168,7 @@
 
     /*
      * "Dorama" is not identical to TMDB genre Drama (18).
-     * Base regional catalogs use Miniseries OR Scripted and exclude Animation.
+     * Base regional catalogs use Miniseries OR Scripted and exclude animation, documentaries, news, reality and talk shows.
      * Genre filtering is added only for thematic rows.
      */
     function regional(country, language, extra) {
@@ -179,7 +183,7 @@
         options.country = country;
         options.language = language;
         if (!options.with_type) options.with_type = '2|4';
-        if (!options.without_genres) options.without_genres = '16';
+        if (!options.without_genres) options.without_genres = EXCLUDED_GENRES.join(',');
 
         return dramaQuery(options);
     }
@@ -216,7 +220,7 @@
                     air_date_lte: today,
                     timezone: KOREA_TIMEZONE
                 }),
-                60 * 6
+                60 * 2
             ),
             section(
                 'kr_ongoing',
@@ -229,7 +233,7 @@
                     air_date_lte: dateOffsetFrom(anchor, 21),
                     timezone: KOREA_TIMEZONE
                 }),
-                60 * 6
+                60 * 2
             ),
             section(
                 'kr_new',
@@ -239,7 +243,7 @@
                     first_air_date_gte: dateOffsetFrom(anchor, -180),
                     first_air_date_lte: today
                 }),
-                60 * 12
+                60 * 6
             ),
             section(
                 'kr_top',
@@ -397,10 +401,71 @@
         };
     }
 
+    function catalogAvailable() {
+        return typeof Lampa.Reguest === 'function' && Lampa.TMDB &&
+            typeof Lampa.TMDB.api === 'function' && typeof Lampa.TMDB.key === 'function';
+    }
+
+    function catalogLanguage() {
+        return Lampa.Storage && typeof Lampa.Storage.field === 'function' ?
+            Lampa.Storage.field('tmdb_lang') || 'uk-UA' : 'uk-UA';
+    }
+
+    function readableTitle(card) {
+        var title = card && (card.name || card.original_name || '');
+        return !!title && !FOREIGN_TITLE.test(title);
+    }
+
+    function requestCatalog(section, page, language, onComplete, onError) {
+        if (!catalogNetwork) catalogNetwork = new Lampa.Reguest();
+        catalogNetwork.timeout(10000);
+        // Different parameter order isolates raw catalog cache from filtered native get/list.
+        var method = section.tmdb + '&language=' + encodeURIComponent(language) +
+            '&page=' + page + '&api_key=' + encodeURIComponent(Lampa.TMDB.key());
+        catalogNetwork.silent(Lampa.TMDB.api(method), function (json) {
+            // An invalid response is an error, not a successful empty catalog.
+            if (!json || !Array.isArray(json.results)) return onError();
+            onComplete(json);
+        }, onError, false, { cache: rowCache(section) });
+    }
+
+    function catalogPage(section, anchor, page, onComplete, onError) {
+        var language = catalogLanguage();
+        requestCatalog(section, page, language, function (json) {
+            var output = normalize(json, section, page, anchor);
+            var needsEnglish = language !== 'en-US' && language !== 'en' &&
+                output.results.some(function (card) { return !readableTitle(card); });
+
+            function finish(english) {
+                var titles = {};
+                if (english && Array.isArray(english.results)) english.results.forEach(function (card) {
+                    if (card && readableTitle(card)) titles[card.id] = card.name || card.original_name;
+                });
+                output.results = output.results.filter(function (card) {
+                    // Keep the catalog's explicit safety/type exclusions even for bad upstream data.
+                    if (card.adult === true || EXCLUDED_GENRES.some(function (id) {
+                        return Array.isArray(card.genre_ids) && card.genre_ids.indexOf(id) !== -1;
+                    })) return false;
+                    if (!readableTitle(card) && titles[card.id]) card.name = titles[card.id];
+                    if (!card.name) card.name = card.original_name || ('TMDB ' + card.id);
+                    if (!card.original_name) card.original_name = card.name;
+                    return true;
+                });
+                onComplete(output);
+            }
+
+            if (!needsEnglish) return finish();
+            // At most one extra page request; no per-card translations or removal on failure.
+            requestCatalog(section, page, 'en-US', finish, function () { finish(); });
+        }, onError);
+    }
+
     function loadRow(section, anchor, onComplete, onError) {
         var tmdb = Lampa.Api.sources.tmdb;
 
-        /* Native Lampa path for horizontal category rows. */
+        if (catalogAvailable()) return catalogPage(section, anchor, 1, onComplete, onError);
+
+        /* Compatibility path for horizontal category rows. */
         if (tmdb && typeof tmdb.get === 'function') {
             tmdb.get(section.tmdb, { page: 1 }, function (json) {
                 onComplete(normalize(json, section, 1, anchor));
@@ -423,6 +488,38 @@
     }
 
     function loadPage(section, anchor, page, onComplete, onError) {
+        if (catalogAvailable()) {
+            var first = (page - 1) * 2 + 1;
+            var parts = [];
+            catalogPage(section, anchor, first, function (head) {
+                parts.push(head);
+                // TMDB exposes at most 500 discover pages, even if total_pages is larger.
+                var total = Math.min(head.total_pages, 500);
+                function finish(tail) {
+                    var merged = copyObject(head);
+                    var seen = {};
+                    merged.results = [];
+                    if (tail) parts.push(tail);
+                    parts.forEach(function (part) {
+                        part.results.forEach(function (card) {
+                            if (seen[card.id]) return;
+                            seen[card.id] = true;
+                            merged.results.push(card);
+                        });
+                    });
+                    merged.page = page;
+                    merged.total_pages = Math.ceil(total / 2);
+                    onComplete(merged);
+                }
+                if (first >= total) return finish();
+                // Sequential fetch bounds concurrency and avoids requesting past the last page.
+                catalogPage(section, anchor, first + 1, finish, function () {
+                    if (onError) onError();
+                });
+            }, function () { if (onError) onError(); });
+            return;
+        }
+        // Legacy builds without public network/TMDB helpers retain the native source path.
         Lampa.Api.list({
             source: 'tmdb',
             url: section.tmdb,
@@ -473,7 +570,8 @@
     }
 
     function clear() {
-        /* No private cache/state. Global Lampa.Api.clear() also clears TMDB. */
+        if (catalogNetwork) catalogNetwork.clear();
+        catalogNetwork = null;
     }
 
     var SOURCE = {

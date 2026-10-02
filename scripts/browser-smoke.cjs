@@ -44,6 +44,8 @@ async function main() {
         const errors = [];
         const discover = [];
         const warnings = [];
+        let revision = 0;
+        let offline = false;
         page.on('pageerror', e => errors.push(e.message));
         page.on('console', e => {
             // Inspect native rendering warnings too: Lampa catches Card exceptions.
@@ -53,13 +55,19 @@ async function main() {
             const url = route.request().url();
             if (url.startsWith(origin + '/')) return route.continue();
             if (url.includes('discover/tv')) {
+                if (offline) return route.abort();
                 const query = new URL(url).searchParams;
                 const n = Number(query.get('page')) || 1;
-                discover.push({ page: n, country: query.get('with_origin_country') });
+                discover.push({ page: n, country: query.get('with_origin_country'), language: query.get('language') });
                 // Reversed response delays exercise real Progress ordering.
                 await new Promise(resolve => setTimeout(resolve, n % 2 ? 30 : 5));
                 return route.fulfill({ json: { page: n, total_pages: 8, total_results: 160,
-                    results: Array.from({ length: 20 }, (_, i) => card(n * 100 + i)) } });
+                    results: Array.from({ length: 20 }, (_, i) => ({
+                        ...card(n * 100 + i), vote_count: 0, genre_ids: [18, 10766],
+                        original_name: '새 드라마',
+                        name: i % 4 === 0 ? (query.get('language') === 'en-US' ? 'English Drama ' + (n * 100 + i) + ' r' + revision : '새 드라마')
+                            : 'Тестова дорама ' + (n * 100 + i) + ' r' + revision
+                    })) } });
             }
             const details = /\/tv\/(\d+)(?:\?|$)/.exec(url);
             if (details) return route.fulfill({ json: {
@@ -92,9 +100,10 @@ async function main() {
             localStorage.setItem('tmdb_lang', 'uk-UA');
             localStorage.setItem('account_use', 'false');
             localStorage.setItem('plugins', '[]');
+            localStorage.setItem('request_caching', 'true');
         });
         await page.goto(origin);
-        await page.waitForFunction(() => window.appready === true && window.app_time_launch && window.show_app, { timeout: 30000 });
+        await page.waitForFunction(() => window.appready === true && window.app_time_launch && window.show_app, null, { timeout: 30000 });
         const version = await page.evaluate(() => Lampa.Manifest.app_version);
         await page.addScriptTag({ url: origin + '/siaivo-dorama.js' });
         const menu = '[data-action="plugin_siaivo_dorama"]';
@@ -110,6 +119,13 @@ async function main() {
         assert.match(titles[2], /онгоїнги/);
         assert.match(titles[3], /Нові корейські/);
 
+        const rowCards = await page.evaluate(() => Lampa.Activity.active().activity.component.items.map(i => i.data.results));
+        assert.ok(rowCards.every(cards => cards.length === 20), 'zero-vote/daily dramas must fill all four rows');
+        assert.equal(rowCards[3][0].name, 'English Drama 100 r0', 'page-level English title fallback');
+        assert.equal(rowCards[3][1].name, 'Тестова дорама 101 r0', 'local title preserved');
+        assert.equal(rowCards[3][0].original_name, '새 드라마');
+        assert.equal(discover.length, 8, 'bounded primary + English request per row');
+
         // Actual "More" event through native Line -> Router -> category_full.
         await page.locator('.items-line__more').first().dispatchEvent('hover:enter');
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category_full'
@@ -121,9 +137,10 @@ async function main() {
         }));
         assert.equal(grid.source, 'plugin_siaivo_dorama');
         assert.match(grid.route, /^siaivo-dorama:\d{4}-\d{2}-\d{2}:kr_popular$/);
-        assert.equal(grid.pages, 4, 'native Siaivo must merge two raw TMDB pages per view');
+        assert.equal(grid.pages, 4, 'catalog must merge two raw TMDB pages per view');
+        assert.equal(discover.filter(r => r.page === 1).length, 8, 'More reuses raw row and English page cache');
 
-        // Run native pagination callback, including its real patched TMDB list.
+        // Run native pagination callback, including real native catalog requests.
         await page.evaluate(() => new Promise((resolve, reject) => {
             const comp = Lampa.Activity.active().activity.component;
             comp.object.page = 2;
@@ -149,9 +166,37 @@ async function main() {
         await page.evaluate(() => Lampa.Activity.backward());
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
         assert.equal(await page.locator(menu).count(), 1);
+        // Exercise real native persistent cache expiry without a two-hour wall-clock wait.
+        revision = 1;
+        const beforeRefresh = discover.length;
+        const refreshed = await page.evaluate(async () => {
+            const originalNow = Date.now;
+            Date.now = () => originalNow() + (120 * 60 * 1000) + 1000;
+            try {
+                return await new Promise((resolve, reject) => Lampa.Api.sources.plugin_siaivo_dorama.category({},
+                    rows => resolve(rows.map(row => row.results[0].name)), () => reject(new Error('Refresh failed'))));
+            } finally { Date.now = originalNow; }
+        });
+        assert.equal(discover.length - beforeRefresh, 4, 'only the two expired rows and their translations refresh');
+        assert.match(refreshed[0], /r0$/, 'popular row remains cached');
+        assert.match(refreshed[1], /r1$/, 'recent episodes refresh');
+        assert.match(refreshed[2], /r1$/, 'ongoing refresh');
+        assert.match(refreshed[3], /r0$/, 'premieres remain cached for six hours');
+
+        offline = true;
+        const offlineRows = await page.evaluate(async () => {
+            const originalNow = Date.now;
+            Date.now = () => originalNow() + (73 * 60 * 60 * 1000);
+            try {
+                return await new Promise((resolve, reject) => Lampa.Api.sources.plugin_siaivo_dorama.category({},
+                    rows => resolve(rows.map(row => row.results.length)), () => reject(new Error('Offline fallback failed'))));
+            } finally { Date.now = originalNow; }
+        });
+        assert.deepEqual(offlineRows, [20, 20, 20, 20], 'native stale cache survives an upstream outage');
+
         assert.deepEqual(errors, [], 'uncaught browser errors');
         assert.deepEqual(warnings, [], 'native rendering/task errors');
-        console.log('OK: Siaivo ' + version + ': menu, rows, More, merged pagination, TV details, Back; fixture TMDB data');
+        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, TV details, Back, shared cache, TTL expiry and offline fallback; fixture TMDB data');
     } finally { await browser.close(); }
 }
 
