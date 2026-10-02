@@ -51,4 +51,4 @@ jobs:
           fi
       - name: Refresh and verify both CDN files
         if: steps.current.outputs.current == 'true'
-        run: node scripts/refresh-cdn.cjs
+        run: node scripts/refresh-cdn.cjs --force

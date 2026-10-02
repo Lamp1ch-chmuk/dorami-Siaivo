@@ -21,3 +21,4 @@ jobs:
           git -C /tmp/siaivo-upstream fetch --depth=1 origin 94e370e7102e6361e47c131448c2e1d2a6714fb7
           git -C /tmp/siaivo-upstream checkout --detach FETCH_HEAD
       - run: npm run test:browser
+      - run: npm run test:delivery-cache

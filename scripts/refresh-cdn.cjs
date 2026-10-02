@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
+const force = process.argv.includes('--force');
 const prefix = '/gh/Lamp1ch-chmuk/dorami-Siaivo@main/';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -18,7 +19,7 @@ async function main() {
         const expected = fs.readFileSync(path.join(root, file));
         const url = 'https://cdn.jsdelivr.net' + prefix + file;
         try {
-            if (expected.equals(get(url))) {
+            if (!force && expected.equals(get(url))) {
                 console.log('CDN already current: ' + file);
                 continue;
             }
