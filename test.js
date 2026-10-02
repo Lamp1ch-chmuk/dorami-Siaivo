@@ -14,7 +14,7 @@ var rawRowResponses = [];
 /*
  * Fixed instant intentionally sits across the Korea/day boundary:
  * 2026-10-01 16:30 UTC = 2026-10-02 01:30 in Seoul.
- * The plugin must anchor Korean date-sensitive rows to 2026-10-02 regardless
+ * The plugin keeps dated route identities anchored to 2026-10-02 regardless
  * of the machine running this test.
  */
 var RealDate = Date;
@@ -247,8 +247,8 @@ assert.strictEqual(rowCalls.length, 4, 'initial category load must fetch only 4 
 assert.strictEqual(listCalls.length, 0, 'initial rows must not use category_full list path');
 assert.strictEqual(batch.length, 4);
 
-/* Load the remaining lazy batches: 4 + 4 + 4 + 2 = 14 sections. */
-while (!exhausted && allRows.length < 14) {
+/* Load the remaining lazy batches: 4 + 2 = 6 sections. */
+while (!exhausted && allRows.length < 6) {
     batch = null;
     nextLoader(function (rows) {
         batch = rows;
@@ -259,8 +259,8 @@ while (!exhausted && allRows.length < 14) {
     if (!batch && !exhausted) throw new Error('lazy loader neither loaded nor exhausted');
 }
 
-assert.strictEqual(allRows.length, 14, 'all configured dorama sections must be reachable');
-assert.strictEqual(rowCalls.length, 14, 'all 14 rows should require one first-page TMDB request each');
+assert.strictEqual(allRows.length, 6, 'all configured dorama sections must be reachable');
+assert.strictEqual(rowCalls.length, 6, 'all 6 rows should require one first-page TMDB request each');
 
 assert.ok(/^siaivo-dorama:2026-10-02:/.test(allRows[0].url), 'route anchor must use the Seoul calendar date, not device-local date');
 
@@ -291,7 +291,7 @@ allRows.forEach(function (row, index) {
     assert.strictEqual(row.results[0].source, 'tmdb', 'card source must remain TMDB');
     assert.strictEqual(rowCalls[index].url.indexOf('discover/tv?'), 0, 'all rows must use TMDB Discover TV');
     assert.strictEqual(params.include_adult, 'false');
-    assert.strictEqual(params.include_null_first_air_dates, 'false');
+    assert.strictEqual(params.include_null_first_air_dates, 'true');
     assert.strictEqual(!!allowedSorts[params.sort_by], true, 'sort_by must be a documented Discover TV sort');
 
     /* Important: plugin row metadata must not poison TMDB/Request cached object. */
@@ -302,18 +302,17 @@ allRows.forEach(function (row, index) {
     assert.notStrictEqual(row.results, rawRowResponses[index].results);
 });
 
-assert.strictEqual(rowCalls[0].cache.life, 60 * 12, 'popular row should use a shorter freshness-aware cache');
-assert.strictEqual(rowCalls[1].cache.life, 60 * 2, 'recent episodes should refresh frequently');
-assert.strictEqual(rowCalls[2].cache.life, 60 * 2, 'ongoing row should refresh frequently');
-
-var recentParams = queryParams(rowCalls[1].url);
-var ongoingParams = queryParams(rowCalls[2].url);
-assert.strictEqual(recentParams.timezone, 'Asia/Seoul', 'episode air-date filters should use Korean broadcast timezone');
-assert.strictEqual(recentParams['air_date.lte'], '2026-10-02', 'recent episodes must use the Seoul calendar day');
-assert.strictEqual(ongoingParams.timezone, 'Asia/Seoul', 'ongoing air-date filters should use Korean broadcast timezone');
-assert.strictEqual(ongoingParams.with_status, '0|2', 'ongoing row must use active production statuses');
-assert.ok(ongoingParams['air_date.gte'] && ongoingParams['air_date.lte'], 'ongoing row must also use an airing-date window');
-assert.strictEqual(queryParams(rowCalls[0].url).timezone, undefined, 'timezone is unnecessary for rows without air_date filters');
+rowCalls.forEach(function (call) {
+    var params = queryParams(call.url);
+    assert.strictEqual(call.cache.life, 60 * 6, 'all popular catalogs refresh in six hours');
+    assert.strictEqual(params.sort_by, 'popularity.desc', 'rank current user interest, not year or rating');
+    ['first_air_date.gte', 'first_air_date.lte', 'first_air_date_year', 'air_date.gte', 'air_date.lte',
+        'vote_count.gte', 'vote_average.gte', 'with_status', 'with_networks', 'timezone'].forEach(function (name) {
+        assert.strictEqual(params[name], undefined, 'retired constraints must not limit popular catalogs');
+    });
+});
+assert.deepStrictEqual(allRows.map(function (row) { return row.url.split(':').pop(); }),
+    ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular', 'tw_popular', 'lgbt']);
 
 /* Broad fiction OR includes crime and comedy without forcing Drama genre 18. */
 assert.strictEqual(queryParams(rowCalls[0].url).with_type, '2|4', 'base dorama filter must include miniseries|scripted');
@@ -323,7 +322,6 @@ assert.strictEqual(queryParams(rowCalls[0].url).with_genres, '18|35|80|9648|1075
 /* Pagination: dated custom route -> public Api.list(TMDb) -> custom route, native cards. */
 var pageResult;
 var rowRoute = allRows[1].url;
-var routeDate = rowRoute.match(/^siaivo-dorama:(\d{4}-\d{2}-\d{2}):/)[1];
 source.list({ url: rowRoute, page: 2 }, function (data) { pageResult = data; }, function () {
     throw new Error('pagination unexpectedly failed');
 });
@@ -331,8 +329,8 @@ assert.strictEqual(listCalls.length, 1);
 assert.strictEqual(listCalls[0].source, 'tmdb');
 assert.strictEqual(listCalls[0].page, 2);
 assert.ok(listCalls[0].url.indexOf('discover/tv?') === 0);
-assert.strictEqual(queryParams(listCalls[0].url)['air_date.lte'], routeDate, 'pagination must reconstruct query from route anchor date');
-assert.strictEqual(queryParams(listCalls[0].url).timezone, 'Asia/Seoul', 'pagination must preserve Korean timezone');
+assert.strictEqual(queryParams(listCalls[0].url)['first_air_date.gte'], undefined, 'pagination has no lower release-date bound');
+assert.strictEqual(queryParams(listCalls[0].url)['first_air_date.lte'], undefined, 'pagination has no upper release-date bound');
 assert.strictEqual(pageResult.source, 'plugin_siaivo_dorama');
 assert.strictEqual(pageResult.page, 2);
 assert.strictEqual(pageResult.results[0].source, 'tmdb');
@@ -357,4 +355,4 @@ assert.strictEqual(typeof Lampa.ContentRows, 'undefined');
 assert.strictEqual(typeof Lampa.SettingsApi, 'undefined');
 assert.strictEqual(typeof Lampa.Storage, 'undefined');
 
-console.log('OK: all 14 rows, Seoul-day anchoring, stable menu identity, routing and filters passed');
+console.log('OK: all 6 rows, Seoul-day anchoring, stable menu identity, routing and filters passed');

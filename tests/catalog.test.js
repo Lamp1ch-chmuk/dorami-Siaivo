@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { harness } = require('./helpers.cjs');
-const route = 'siaivo-dorama:2026-10-02:kr_recent_episodes';
+const route = 'siaivo-dorama:2026-10-02:kr_popular';
 
 function load(h, page = 1, url = route) {
     h.state.run();
@@ -111,13 +111,13 @@ test('invalid catalog responses fail; malformed, adult, and animated cards never
     assert.deepEqual(Array.from(load(h).output.results, c => c.id), [3]);
 });
 
-test('rows and grid share section TTL, native proxy/key, language and date filters', () => {
+test('rows and grid share six-hour TTL, native proxy/key and language', () => {
     const h = harness({ catalog: true });
     h.state.run();
     let rows;
     h.state.source().category({}, data => { rows = data; }, assert.fail);
     assert.equal(h.state.requests.length, 4);
-    assert.deepEqual(h.state.requests.map(c => c.cache.life), [720, 120, 120, 720]);
+    assert.deepEqual(h.state.requests.map(c => c.cache.life), [360, 360, 360, 360]);
     for (const row of rows) {
         const before = h.state.requests.length;
         h.state.source().list({ url: row.url, page: 1 }, () => {}, assert.fail);
@@ -139,12 +139,12 @@ test('native catalog path retains lazy ordering and KST date over device midnigh
     let rows;
     const next = h.state.source().category({}, data => { rows = data; }, assert.fail);
     const all = Array.from(rows);
-    while (all.length < 14) next(more => all.push(...more), assert.fail);
-    assert.equal(h.state.requests.length, 14, 'all fourteen sections remain lazy and reachable');
-    assert.equal(h.state.requests[4].cache.life, 4320);
-    assert.equal(h.state.requests[5].cache.life, 1440);
+    while (all.length < 6) next(more => all.push(...more), assert.fail);
+    assert.equal(h.state.requests.length, 6, 'all six sections remain lazy and reachable');
+    assert.equal(h.state.requests[4].cache.life, 360);
+    assert.equal(h.state.requests[5].cache.life, 360);
     assert.ok(all.every(row => row.source === 'plugin_siaivo_dorama' && row.results[0].source === 'tmdb'));
     h.state.now = '2026-10-02T16:30:00Z';
     h.state.source().list({ url: rows[1].url, page: 2 }, () => {}, assert.fail);
-    assert.equal(new URL(h.state.requests.at(-1).url).searchParams.get('air_date.lte'), '2026-10-02');
+    assert.equal(new URL(h.state.requests.at(-1).url).searchParams.get('first_air_date.lte'), null);
 });

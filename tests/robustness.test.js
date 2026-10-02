@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const acorn = require('acorn');
 const { harness, code } = require('./helpers.cjs');
-const route = 'siaivo-dorama:2026-10-02:kr_recent_episodes';
+const route = 'siaivo-dorama:2026-10-02:kr_popular';
 
 test('plugin parses as ES5, not merely a regex subset', () => {
     acorn.parse(code, { ecmaVersion: 5 });
@@ -111,8 +111,8 @@ test('empty/failed rows are skipped and remaining rows backfill in order', () =>
     h.state.run();
     let rows;
     h.state.source().category({}, value => { rows = value; }, assert.fail);
-    assert.equal(h.state.requests.length, 8);
-    assert.deepEqual(Array.from(rows, r => r.results[0].id), [3, 4, 5, 6, 7, 8]);
+    assert.equal(h.state.requests.length, 6);
+    assert.deepEqual(Array.from(rows, r => r.results[0].id), [3, 4, 5, 6]);
 });
 
 test('all empty responses or all network failures terminate once', () => {
@@ -122,7 +122,7 @@ test('all empty responses or all network failures terminate once', () => {
         let errors = 0;
         h.state.source().category({}, () => assert.fail('must not load empty rows'), () => errors++);
         assert.equal(errors, 1);
-        assert.equal(h.state.requests.length, 14);
+        assert.equal(h.state.requests.length, 6);
     }
 });
 
@@ -134,7 +134,7 @@ test('out-of-order asynchronous completion preserves section order', () => {
     h.state.source().category({}, value => { rows = value; }, assert.fail);
     assert.equal(rows, undefined);
     pending.slice().reverse().forEach((call, i) => call.ok({ results: [{ id: i + 1, genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] }));
-    assert.deepEqual(Array.from(rows, r => r.url.split(':').pop()), ['kr_popular', 'kr_recent_episodes', 'kr_ongoing', 'lgbt']);
+    assert.deepEqual(Array.from(rows, r => r.url.split(':').pop()), ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular']);
 });
 
 test('new category visits have independent lazy queues and Seoul-day anchors', () => {
@@ -149,9 +149,9 @@ test('new category visits have independent lazy queues and Seoul-day anchors', (
     assert.match(second[0].url, /2026-10-03/);
     let more;
     next(rows => { more = rows; }, assert.fail);
-    assert.match(more[0].url, /2026-10-02:kr_top/);
+    assert.match(more[0].url, /2026-10-02:tw_popular/);
     h.state.source().list({ url: first[1].url, page: 2 }, () => {}, assert.fail);
-    assert.equal(new URL(h.state.requests.at(-1).url, 'https://example.test').searchParams.get('air_date.lte'), '2026-10-02');
+    assert.equal(new URL(h.state.requests.at(-1).url, 'https://example.test').searchParams.get('first_air_date.lte'), null);
 });
 
 test('invalid dates/unknown sections fail once without a TMDB request', () => {

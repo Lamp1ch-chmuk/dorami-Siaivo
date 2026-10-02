@@ -1,6 +1,6 @@
 /*
  * Siaivo Dorama for Lampa 3.x / Siaivo
- * Version: 0.6.0
+ * Version: 0.7.0
  *
  * One left-navigation category: "Дорами".
  * Nothing is injected into the home/main screen.
@@ -13,18 +13,17 @@
  * - rows and grids share bounded, per-section native caching;
  * - untranslated titles use an English page fallback, matched by TMDB id;
  * - TMDB responses are copied before row metadata is changed (do not mutate cache);
- * - date-dependent routes contain an anchor date, so pagination remains stable
- *   even if the device crosses midnight while the category is open.
+ * - dated routes stay compatible; release dates never restrict the catalog;
+ * - TMDB popularity order reflects user interest, without release-year gates.
  */
 (function () {
     'use strict';
 
     var PLUGIN_ID = 'siaivo_dorama';
     var SOURCE_ID = 'plugin_siaivo_dorama';
-    var VERSION = '0.6.0';
+    var VERSION = '0.7.0';
     var MENU_ACTION = 'plugin_siaivo_dorama';
     var MENU_TITLE = 'Дорами';
-    var KOREA_TIMEZONE = 'Asia/Seoul';
     var KOREA_UTC_OFFSET_HOURS = 9;
     var ROOT_ROUTE = 'siaivo-dorama';
     var ROUTE_PREFIX = ROOT_ROUTE + ':';
@@ -32,13 +31,14 @@
     var catalogNetwork;
     var EXCLUDED_GENRES = [16, 99, 10762, 10763, 10764, 10767];
     var FICTION_GENRES = [18, 35, 80, 9648, 10759, 10765, 10751, 10766, 10768];
-    // TMDB keyword IDs verified against search/keyword, not guessed from titles.
-    var EXCLUDED_KEYWORDS = [210024, 317204]; // anime, tokusatsu
+    // TMDB keyword IDs verified against the keyword/TV APIs, not guessed from titles.
+    var EXCLUDED_KEYWORDS = [210024, 317204, 194610, 191498, 300454]; // anime, tokusatsu, variety, sports entertainment, puppetry
+    // Confirmed non-dramas misclassified as Scripted/Drama in TMDB; see docs/POPULARITY-AUDIT.md.
+    var NON_DRAMA_IDS = [67192, 121651, 5822, 108112, 19530];
     var LGBT_KEYWORDS = [158718, 289844, 384569, 365317, 280003, 383699, 240305, 319872, 353629, 351185];
     var DRAMA_COUNTRIES = ['KR', 'JP', 'TH', 'CN', 'TW', 'HK', 'PH', 'VN', 'SG'];
-    var CATALOG_START = '2015-01-01';
     var FOREIGN_TITLE = /[^\u0000-\u036f\u0400-\u052f\u1e00-\u1eff\u2000-\u2bff\u3000-\u303f\ud800-\udfff\ufe0f]/;
-    var DEFAULT_CACHE_LIFE = 60 * 24;
+    var DEFAULT_CACHE_LIFE = 60 * 6;
     var START_FLAG = '__' + PLUGIN_ID + '_started';
     var MENU_LISTENER_FLAG = '__' + PLUGIN_ID + '_menu_listener';
     var APP_LISTENER_FLAG = '__' + PLUGIN_ID + '_app_listener';
@@ -84,9 +84,9 @@
     }
 
     /*
-     * Korean date-sensitive rows must use the Korean calendar day, not the
-     * device's local day. Korea is fixed at UTC+9 and has no daylight saving,
-     * so this avoids Intl/time-zone dependencies on older TV WebViews.
+     * Preserve dated route identities independently of the device time zone.
+     * Korea is fixed at UTC+9; no Intl dependency is needed on old TV WebViews.
+     * This date identifies the visit only and never limits release dates.
      */
     function koreaCalendarDate(now) {
         var shifted = new Date((now || new Date()).getTime() + KOREA_UTC_OFFSET_HOURS * 60 * 60 * 1000);
@@ -97,12 +97,6 @@
             shifted.getUTCDate(),
             12, 0, 0
         );
-    }
-
-    function dateOffsetFrom(anchor, days) {
-        var date = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate(), 12, 0, 0);
-        date.setDate(date.getDate() + (days || 0));
-        return dateKey(date);
     }
 
     function parseDateKey(value) {
@@ -148,7 +142,7 @@
 
         var params = {
             include_adult: 'false',
-            include_null_first_air_dates: 'false',
+            include_null_first_air_dates: 'true',
             sort_by: options.sort_by || 'popularity.desc'
         };
 
@@ -156,17 +150,7 @@
         if (options.language) params.with_original_language = options.language;
         if (options.with_genres) params.with_genres = options.with_genres;
         if (options.without_genres) params.without_genres = options.without_genres;
-        if (options.with_networks) params.with_networks = options.with_networks;
-        if (options.with_status) params.with_status = options.with_status;
         if (options.with_type) params.with_type = options.with_type;
-        if (options.first_air_date_year) params.first_air_date_year = options.first_air_date_year;
-        if (options.first_air_date_lte) params['first_air_date.lte'] = options.first_air_date_lte;
-        if (options.first_air_date_gte) params['first_air_date.gte'] = options.first_air_date_gte;
-        if (options.air_date_lte) params['air_date.lte'] = options.air_date_lte;
-        if (options.air_date_gte) params['air_date.gte'] = options.air_date_gte;
-        if (options.timezone) params.timezone = options.timezone;
-        if (options.vote_average_gte !== undefined) params['vote_average.gte'] = options.vote_average_gte;
-        if (options.vote_count_gte !== undefined) params['vote_count.gte'] = options.vote_count_gte;
         if (options.with_keywords) params.with_keywords = options.with_keywords;
         if (options.without_keywords) params.without_keywords = options.without_keywords;
 
@@ -197,151 +181,32 @@
         return dramaQuery(options);
     }
 
-    function korean(extra) {
-        return regional('KR', 'ko', extra);
-    }
-
-    function balanced(anchor, extra) {
-        var options = copyObject(extra);
-        options.first_air_date_gte = CATALOG_START;
-        options.first_air_date_lte = dateOffsetFrom(anchor, 0);
-        if (options.vote_count_gte === undefined) options.vote_count_gte = 10;
-        return options;
-    }
-
     function section(id, title, tmdb, cacheLife) {
         return {
             id: id,
             title: title,
             tmdb: tmdb,
-            first_from: queryValue(tmdb, 'first_air_date.gte'),
-            first_until: queryValue(tmdb, 'first_air_date.lte'),
-            minimum_votes: Number(queryValue(tmdb, 'vote_count.gte')),
             cache_life: typeof cacheLife === 'number' ? cacheLife : DEFAULT_CACHE_LIFE
         };
     }
 
-    function getSections(anchor) {
-        var today = dateOffsetFrom(anchor, 0);
-
+    function getSections() {
+        // TMDB calculates popularity from daily user activity plus accumulated interest.
+        // Preserve its order: no release-year, rating or vote-count gates.
         return [
-            section(
-                'kr_popular',
-                '🇰🇷 Популярні корейські дорами',
-                korean(balanced(anchor, { sort_by: 'popularity.desc' })),
-                60 * 12
-            ),
-            section(
-                'kr_recent_episodes',
-                '🔥 Дорами з новими серіями',
-                korean({
-                    sort_by: 'popularity.desc',
-                    air_date_gte: dateOffsetFrom(anchor, -14),
-                    air_date_lte: today,
-                    timezone: KOREA_TIMEZONE
-                }),
-                60 * 2
-            ),
-            section(
-                'kr_ongoing',
-                '📺 Корейські онгоїнги',
-                korean({
-                    sort_by: 'popularity.desc',
-                    with_status: '0|2',
-                    first_air_date_lte: today,
-                    air_date_gte: dateOffsetFrom(anchor, -21),
-                    air_date_lte: dateOffsetFrom(anchor, 21),
-                    timezone: KOREA_TIMEZONE
-                }),
-                60 * 2
-            ),
-            section(
-                'lgbt',
-                '🏳️‍🌈 ЛГБТ-дорами',
-                regional(DRAMA_COUNTRIES.join('|'), null, balanced(anchor, {
-                    with_keywords: LGBT_KEYWORDS.join('|'),
-                    vote_count_gte: 5
-                })),
-                60 * 12
-            ),
-            section(
-                'kr_top',
-                '⭐ Корейські дорами з високим рейтингом',
-                korean(balanced(anchor, {
-                    sort_by: 'vote_average.desc',
-                    vote_average_gte: 7.5,
-                    vote_count_gte: 100
-                })),
-                60 * 24 * 3
-            ),
-            section(
-                'kr_comedy',
-                '😂 Комедійні дорами',
-                korean(balanced(anchor, {
-                    sort_by: 'popularity.desc',
-                    with_genres: '35'
-                }))
-            ),
-            section(
-                'kr_mystery',
-                '🕵️ Детективи та таємниці',
-                korean(balanced(anchor, {
-                    sort_by: 'popularity.desc',
-                    with_genres: '9648'
-                }))
-            ),
-            section(
-                'kr_fantasy',
-                '✨ Фентезі та фантастика',
-                korean(balanced(anchor, {
-                    sort_by: 'popularity.desc',
-                    with_genres: '10765'
-                }))
-            ),
-            section(
-                'kr_netflix',
-                '🎬 Netflix • корейські серіали',
-                korean(balanced(anchor, {
-                    sort_by: 'popularity.desc',
-                    with_networks: '213'
-                }))
-            ),
-            section(
-                'kr_tvn',
-                '📡 tvN',
-                korean(balanced(anchor, {
-                    sort_by: 'popularity.desc',
-                    with_networks: '866'
-                }))
-            ),
-            section(
-                'kr_jtbc',
-                '📡 JTBC',
-                korean(balanced(anchor, {
-                    sort_by: 'popularity.desc',
-                    with_networks: '885'
-                }))
-            ),
-            section(
-                'cn_popular',
-                '🇨🇳 Китайські дорами',
-                regional('CN', 'zh', balanced(anchor, { sort_by: 'popularity.desc' }))
-            ),
-            section(
-                'jp_popular',
-                '🇯🇵 Японські дорами',
-                regional('JP', 'ja', balanced(anchor, { sort_by: 'popularity.desc' }))
-            ),
-            section(
-                'th_popular',
-                '🇹🇭 Тайські дорами',
-                regional('TH', 'th', balanced(anchor, { sort_by: 'popularity.desc' }))
-            )
+            section('kr_popular', '🇰🇷 Популярні корейські дорами', regional('KR', 'ko')),
+            section('cn_popular', '🇨🇳 Популярні китайські дорами', regional('CN', 'zh')),
+            section('jp_popular', '🇯🇵 Популярні японські дорами', regional('JP', 'ja')),
+            section('th_popular', '🇹🇭 Популярні тайські дорами', regional('TH', 'th')),
+            section('tw_popular', '🇹🇼 Популярні тайванські дорами', regional('TW', 'zh')),
+            section('lgbt', '🏳️‍🌈 ЛГБТ-дорами', regional(DRAMA_COUNTRIES.join('|'), null, {
+                with_keywords: LGBT_KEYWORDS.join('|')
+            }))
         ];
     }
 
-    function getSection(id, anchor) {
-        var sections = getSections(anchor);
+    function getSection(id) {
+        var sections = getSections();
         var i;
 
         for (i = 0; i < sections.length; i++) {
@@ -376,29 +241,11 @@
         };
     }
 
-    function queryValue(query, name) {
-        var parts = query.split('?')[1].split('&');
-        var i;
-        for (i = 0; i < parts.length; i++) {
-            var pair = parts[i].split('=');
-            if (decodeURIComponent(pair[0]) === name) return decodeURIComponent(pair[1] || '');
-        }
-        return '';
-    }
-
     function allowedCard(card, section) {
         var genres = card.genre_ids;
-        var first = card.first_air_date;
-        var from = section.first_from;
-        var until = section.first_until;
-        var votes = section.minimum_votes;
-        if (card.adult === true || card.mal_id) return false;
+        if (card.adult === true || card.mal_id || NON_DRAMA_IDS.indexOf(card.id) !== -1) return false;
         if (!Array.isArray(genres) || !genres.some(function (id) { return FICTION_GENRES.indexOf(id) !== -1; })) return false;
         if (EXCLUDED_GENRES.some(function (id) { return genres.indexOf(id) !== -1; })) return false;
-        if (from || until) {
-            if (!parseDateKey(first) || (from && first < from) || (until && first > until)) return false;
-        }
-        if (votes && (!isFinite(Number(card.vote_count)) || Number(card.vote_count) < votes)) return false;
         if (section.id === 'lgbt' && (!Array.isArray(card.origin_country) || !card.origin_country.some(function (country) {
             return DRAMA_COUNTRIES.indexOf(country) !== -1;
         }))) return false;
@@ -496,11 +343,10 @@
                 if (english && Array.isArray(english.results)) english.results.forEach(function (card) {
                     if (card && readableTitle(card)) titles[card.id] = card.name || card.original_name;
                 });
-                output.results = output.results.filter(function (card) {
+                output.results.forEach(function (card) {
                     if (!readableTitle(card) && titles[card.id]) card.name = titles[card.id];
                     if (!card.name) card.name = card.original_name || ('TMDB ' + card.id);
                     if (!card.original_name) card.original_name = card.name;
-                    return true;
                 });
                 onComplete(output);
             }
@@ -586,7 +432,7 @@
         var anchor = koreaCalendarDate(new Date());
         var parts = [];
 
-        getSections(anchor).forEach(function (item) {
+        getSections().forEach(function (item) {
             parts.push(function (call) {
                 loadRow(item, anchor, call, call);
             });
@@ -611,7 +457,7 @@
             return;
         }
 
-        sectionItem = getSection(route.id, route.anchor);
+        sectionItem = getSection(route.id);
         if (!sectionItem) {
             if (onError) onError();
             return;

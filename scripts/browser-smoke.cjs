@@ -78,7 +78,7 @@ async function main() {
                 await new Promise(resolve => setTimeout(resolve, n % 2 ? 30 : 5));
                 return route.fulfill({ json: { page: n, total_pages: 8, total_results: 160,
                     results: Array.from({ length: 20 }, (_, i) => ({
-                        ...card(n * 100 + i), vote_count: query.has('air_date.gte') ? 0 : 200, genre_ids: [18, 10766],
+                        ...card(n * 100 + i), vote_count: 0, first_air_date: i === 2 ? '' : i % 3 === 0 ? '2005-01-01' : i % 3 === 1 ? '2018-01-01' : '2026-01-01', genre_ids: [18, 10766],
                         origin_country: [query.get('with_origin_country').split('|')[i % query.get('with_origin_country').split('|').length]],
                         original_name: '새 드라마',
                         name: i % 4 === 0 ? (query.get('language') === 'en-US' ? 'English Drama ' + (n * 100 + i) + ' r' + revision : '새 드라마')
@@ -135,16 +135,18 @@ async function main() {
         assert.equal(await page.evaluate(() => Lampa.Activity.active().source), 'plugin_siaivo_dorama');
         const titles = await page.evaluate(() => Lampa.Activity.active().activity.component.items.map(i => i.data.title));
         assert.match(titles[0], /Популярні корейські/);
-        assert.match(titles[1], /новими серіями/);
-        assert.match(titles[2], /онгоїнги/);
-        assert.match(titles[3], /ЛГБТ-дорами/);
+        assert.match(titles[1], /Популярні китайські/);
+        assert.match(titles[2], /Популярні японські/);
+        assert.match(titles[3], /Популярні тайські/);
 
         const rowCards = await page.evaluate(() => Lampa.Activity.active().activity.component.items.map(i => i.data.results));
-        assert.ok(rowCards.every(cards => cards.length === 20), 'fresh zero-vote/daily and balanced LGBT dramas fill four rows without mapped anime');
+        assert.ok(rowCards.every(cards => cards.length === 20), 'old and new zero-vote dramas fill popular rows without mapped anime');
         assert.equal(rowCards[3][0].name, 'English Drama 100 r0', 'page-level English title fallback');
         assert.equal(rowCards[3][1].name, 'Тестова дорама 101 r0', 'local title preserved');
         assert.equal(rowCards[3][0].original_name, '새 드라마');
         assert.equal(discover.length, 8, 'bounded primary + English request per row');
+        assert.equal(rowCards[0][0].first_air_date, '2005-01-01', 'older drama remains first in popularity order');
+        assert.ok(discover.every(r => ['KR', 'CN', 'JP', 'TH'].includes(r.country)));
 
         // Actual "More" event through native Line -> Router -> category_full.
         await page.locator('.items-line__more').first().dispatchEvent('hover:enter');
@@ -186,8 +188,31 @@ async function main() {
         await page.evaluate(() => Lampa.Activity.backward());
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
         assert.equal(await page.locator(menu).count(), 1);
+        // Native lazy loading appends the remaining Taiwanese and shared LGBT rows.
+        await page.evaluate(() => {
+            const comp = Lampa.Activity.active().activity.component;
+            comp.builded_time = 0;
+            comp.emit('loadNext');
+        });
+        await page.waitForFunction(() => {
+            const comp = Lampa.Activity.active().activity.component;
+            // Each native scroll-animation completion appends one queued row.
+            if (comp.loaded.length) comp.scroll.onAnimateEnd();
+            return comp.items.length === 6;
+        }, null, { timeout: 5000 }).catch(async error => {
+            console.error('Lazy rows:', await page.evaluate(() => {
+                const c = Lampa.Activity.active().activity.component;
+                return { count: c.items.length, loaded: c.loaded.length, next: c.next_wait, animated: c.scroll.animated() };
+            }));
+            throw error;
+        });
+        const allTitles = await page.evaluate(() => Lampa.Activity.active().activity.component.items.map(i => i.data.title));
+        assert.match(allTitles[4], /Популярні тайванські/);
+        assert.match(allTitles[5], /ЛГБТ-дорами/);
+        // Focus the last native line so off-screen cards/More finish lazy rendering.
+        await page.evaluate(() => Lampa.Activity.active().activity.component.items[5].toggle());
         // Open the single mixed-country LGBT row through its actual native More control.
-        await page.locator('.items-line__more').nth(3).dispatchEvent('hover:enter');
+        await page.locator('.items-line__more').nth(5).dispatchEvent('hover:enter');
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category_full'
             && Lampa.Activity.active().activity.component.items.length === 40);
         const lgbt = await page.evaluate(() => ({
@@ -200,22 +225,25 @@ async function main() {
         await page.evaluate(() => Lampa.Activity.backward());
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
 
-        // Exercise real native persistent cache expiry without a two-hour wall-clock wait.
+        // Real native persistent caching: no refresh at two hours, all rows at six hours.
         revision = 1;
         const beforeRefresh = discover.length;
-        const refreshed = await page.evaluate(async () => {
-            const originalNow = Date.now;
-            Date.now = () => originalNow() + (120 * 60 * 1000) + 1000;
-            try {
-                return await new Promise((resolve, reject) => Lampa.Api.sources.plugin_siaivo_dorama.category({},
-                    rows => resolve(rows.map(row => row.results[0].name)), () => reject(new Error('Refresh failed'))));
-            } finally { Date.now = originalNow; }
-        });
-        assert.equal(discover.length - beforeRefresh, 4, 'only the two expired rows and their translations refresh');
-        assert.match(refreshed[0], /r0$/, 'popular row remains cached');
-        assert.match(refreshed[1], /r1$/, 'recent episodes refresh');
-        assert.match(refreshed[2], /r1$/, 'ongoing refresh');
-        assert.match(refreshed[3], /r0$/, 'LGBT row remains cached for twelve hours');
+        async function readInitialRowsAfter(hours) {
+            return page.evaluate(async hours => {
+                const originalNow = Date.now;
+                Date.now = () => originalNow() + (hours * 60 * 60 * 1000) + 1000;
+                try {
+                    return await new Promise((resolve, reject) => Lampa.Api.sources.plugin_siaivo_dorama.category({},
+                        rows => resolve(rows.map(row => row.results[0].name)), () => reject(new Error('Refresh failed'))));
+                } finally { Date.now = originalNow; }
+            }, hours);
+        }
+        const cached = await readInitialRowsAfter(2);
+        assert.equal(discover.length, beforeRefresh, 'six-hour cache avoids repeated requests');
+        assert.ok(cached.every(name => /r0$/.test(name)));
+        const refreshed = await readInitialRowsAfter(6);
+        assert.equal(discover.length - beforeRefresh, 8, 'four expired rows and their translations refresh');
+        assert.ok(refreshed.every(name => /r1$/.test(name)));
 
         offline = true;
         const offlineRows = await page.evaluate(async () => {
@@ -231,11 +259,11 @@ async function main() {
         // Reusing the identical entry after app restart loads newer code, including with
         // GitHub Raw's real text/plain + nosniff response policy.
         offline = false;
-        deliveredVersion = '0.6.1'; // synthetic next release fixture
+        deliveredVersion = '0.7.1'; // synthetic next release fixture
         await page.reload();
         await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
         await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
-            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.6.1');
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.7.1');
         assert.equal(await page.locator(menu).count(), 1);
         assert.equal(codeRequests.length, 2);
         assert.equal(new URL(codeRequests[0]).pathname, new URL(codeRequests[1]).pathname);
@@ -245,7 +273,7 @@ async function main() {
         await page.reload();
         await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
         await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
-            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.6.1');
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.7.1');
         assert.equal(await page.locator(menu).count(), 1);
         assert.equal(codeRequests.length, 3, 'saved newest code used without requesting older CDN');
 
