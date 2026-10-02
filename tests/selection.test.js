@@ -32,15 +32,15 @@ test('popular catalogs retain old, new, undated and zero-vote live dramas in ups
     }
 });
 
-test('only five country popularity rows and one LGBT row remain lazy and refresh in six hours', () => {
+test('five countries, one popular-newest and one LGBT row remain lazy with targeted TTL', () => {
     const h = harness({ catalog: true }); h.state.run();
     let rows;
     const next = h.state.source().category({}, data => { rows = Array.from(data); }, assert.fail);
     assert.equal(rows.length, 4); assert.equal(h.state.requests.length, 4);
     next(data => rows.push(...data), assert.fail);
     assert.deepEqual(rows.map(row => row.url.split(':').pop()),
-        ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular', 'tw_popular', 'lgbt']);
-    assert.ok(h.state.requests.every(call => call.cache.life === 360));
+        ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular', 'tw_popular', 'new_popular', 'lgbt']);
+    assert.deepEqual(h.state.requests.map(call => call.cache.life), [360, 360, 360, 360, 360, 180, 360]);
     assert.equal(new URL(h.state.requests[4].url).searchParams.get('with_origin_country'), 'TW');
     assert.equal(new URL(h.state.requests[4].url).searchParams.get('with_original_language'), 'zh');
 });
@@ -64,7 +64,7 @@ test('one LGBT catalog mixes Asian countries with verified BL/GL/romance tags an
     category.state.run();
     let rows;
     const next = category.state.source().category({}, data => { rows = Array.from(data); }, assert.fail);
-    while (rows.length < 6) next(data => rows.push(...data), assert.fail);
+    while (rows.length < 7) next(data => rows.push(...data), assert.fail);
     assert.equal(rows.filter(row => /lgbt/.test(row.url)).length, 1);
     assert.equal(rows.some(row => /kr_new/.test(row.url)), false);
 });

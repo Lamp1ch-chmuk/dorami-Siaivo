@@ -44,12 +44,12 @@ function harness(options = {}) {
         };
     }
     const response = page => ({ page, total_pages: 8, total_results: 160,
-        results: [{ id: 1, name: 'Test Drama', original_name: 'Test Drama', source: 'foreign', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] });
+        results: [{ id: 1, name: 'Test Drama', original_name: 'Test Drama', source: 'foreign', genre_ids: [18], first_air_date: '2026-09-01', popularity: 20, vote_count: 200, origin_country: ['KR'] }] });
     function request(kind, url, params, ok, error, cache) {
         const call = { kind, url, params, ok, error, cache };
         state.requests.push(call);
         if (options.respond) options.respond(call, state);
-        else ok(response(params.page));
+        else ok({ ...response(params.page), ...(url.includes('first_air_date.gte') ? { total_pages: 1 } : {}) });
     }
     const lampa = {
         Api: {
@@ -78,6 +78,7 @@ function harness(options = {}) {
     }
     function Clock(...args) { return args.length ? new Date(...args) : new Date(state.now); }
     Clock.prototype = Date.prototype;
+    Clock.now = () => new Date(state.now).getTime();
     const context = vm.createContext({
         Lampa: lampa, Date: Clock,
         window: { Lampa: lampa, appready: options.ready !== false,

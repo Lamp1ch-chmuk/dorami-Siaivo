@@ -106,13 +106,13 @@ test('empty/failed rows are skipped and remaining rows backfill in order', () =>
     const h = harness({ respond(call, state) {
         if (state.requests.length === 1) return call.error();
         if (state.requests.length === 2) return call.ok({ results: [] });
-        call.ok({ results: [{ id: state.requests.length, name: 'Drama', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] });
+        call.ok({ results: [{ id: state.requests.length, name: 'Drama', genre_ids: [18], first_air_date: '2026-09-01', popularity: 20, vote_count: 200, origin_country: ['KR'] }] });
     }});
     h.state.run();
     let rows;
     h.state.source().category({}, value => { rows = value; }, assert.fail);
-    assert.equal(h.state.requests.length, 6);
-    assert.deepEqual(Array.from(rows, r => r.results[0].id), [3, 4, 5, 6]);
+    assert.equal(h.state.requests.length, 7);
+    assert.deepEqual(Array.from(rows, r => r.results[0].id), [3, 4, 5, 6, 7]);
 });
 
 test('all empty responses or all network failures terminate once', () => {
@@ -122,7 +122,7 @@ test('all empty responses or all network failures terminate once', () => {
         let errors = 0;
         h.state.source().category({}, () => assert.fail('must not load empty rows'), () => errors++);
         assert.equal(errors, 1);
-        assert.equal(h.state.requests.length, 6);
+        assert.equal(h.state.requests.length, 7);
     }
 });
 
@@ -133,7 +133,7 @@ test('out-of-order asynchronous completion preserves section order', () => {
     let rows;
     h.state.source().category({}, value => { rows = value; }, assert.fail);
     assert.equal(rows, undefined);
-    pending.slice().reverse().forEach((call, i) => call.ok({ results: [{ id: i + 1, genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] }));
+    pending.slice().reverse().forEach((call, i) => call.ok({ results: [{ id: i + 1, genre_ids: [18], first_air_date: '2026-09-01', popularity: 20, vote_count: 200, origin_country: ['KR'] }] }));
     assert.deepEqual(Array.from(rows, r => r.url.split(':').pop()), ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular']);
 });
 

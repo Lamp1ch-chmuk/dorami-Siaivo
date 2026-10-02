@@ -1,6 +1,6 @@
 /*
  * Siaivo Dorama for Lampa 3.x / Siaivo
- * Version: 0.7.0
+ * Version: 0.8.0
  *
  * One left-navigation category: "Дорами".
  * Nothing is injected into the home/main screen.
@@ -13,7 +13,7 @@
  * - rows and grids share bounded, per-section native caching;
  * - untranslated titles use an English page fallback, matched by TMDB id;
  * - TMDB responses are copied before row metadata is changed (do not mutate cache);
- * - dated routes stay compatible; release dates never restrict the catalog;
+ * - dated routes anchor the newest window; country/LGBT catalogs stay unrestricted;
  * - TMDB popularity order reflects user interest, without release-year gates.
  */
 (function () {
@@ -21,7 +21,7 @@
 
     var PLUGIN_ID = 'siaivo_dorama';
     var SOURCE_ID = 'plugin_siaivo_dorama';
-    var VERSION = '0.7.0';
+    var VERSION = '0.8.0';
     var MENU_ACTION = 'plugin_siaivo_dorama';
     var MENU_TITLE = 'Дорами';
     var KOREA_UTC_OFFSET_HOURS = 9;
@@ -29,6 +29,14 @@
     var ROUTE_PREFIX = ROOT_ROUTE + ':';
     var PARTS_LIMIT = 4;
     var catalogNetwork;
+    var latestCache = [];
+    var latestLoads = [];
+    var latestGeneration = 0;
+    var NEW_COUNTRIES = ['KR', 'CN', 'JP', 'TH', 'TW'];
+    var NEW_DAYS = 120;
+    var NEW_MIN_POPULARITY = 10;
+    var NEW_MIN_VOTES = 3;
+    var NEW_MAX_PAGES = 5;
     var EXCLUDED_GENRES = [16, 99, 10762, 10763, 10764, 10767];
     var FICTION_GENRES = [18, 35, 80, 9648, 10759, 10765, 10751, 10766, 10768];
     // TMDB keyword IDs verified against the keyword/TV APIs, not guessed from titles.
@@ -86,7 +94,7 @@
     /*
      * Preserve dated route identities independently of the device time zone.
      * Korea is fixed at UTC+9; no Intl dependency is needed on old TV WebViews.
-     * This date identifies the visit only and never limits release dates.
+     * The newest window is anchored to this visit; other catalogs have no date limits.
      */
     function koreaCalendarDate(now) {
         var shifted = new Date((now || new Date()).getTime() + KOREA_UTC_OFFSET_HOURS * 60 * 60 * 1000);
@@ -97,6 +105,12 @@
             shifted.getUTCDate(),
             12, 0, 0
         );
+    }
+
+    function dateOffsetFrom(anchor, days) {
+        var date = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate(), 12, 0, 0);
+        date.setDate(date.getDate() + days);
+        return dateKey(date);
     }
 
     function parseDateKey(value) {
@@ -151,6 +165,10 @@
         if (options.with_genres) params.with_genres = options.with_genres;
         if (options.without_genres) params.without_genres = options.without_genres;
         if (options.with_type) params.with_type = options.with_type;
+        if (options.first_air_date_gte) params['first_air_date.gte'] = options.first_air_date_gte;
+        if (options.first_air_date_lte) params['first_air_date.lte'] = options.first_air_date_lte;
+        if (options.vote_count_gte !== undefined) params['vote_count.gte'] = options.vote_count_gte;
+        if (options.first_air_date_gte) params.include_null_first_air_dates = 'false';
         if (options.with_keywords) params.with_keywords = options.with_keywords;
         if (options.without_keywords) params.without_keywords = options.without_keywords;
 
@@ -190,23 +208,28 @@
         };
     }
 
-    function getSections() {
+    function getSections(anchor) {
         // TMDB calculates popularity from daily user activity plus accumulated interest.
-        // Preserve its order: no release-year, rating or vote-count gates.
+        // Preserve its order. Only the explicit newest shortlist has date/vote gates.
         return [
             section('kr_popular', '🇰🇷 Популярні корейські дорами', regional('KR', 'ko')),
             section('cn_popular', '🇨🇳 Популярні китайські дорами', regional('CN', 'zh')),
             section('jp_popular', '🇯🇵 Популярні японські дорами', regional('JP', 'ja')),
             section('th_popular', '🇹🇭 Популярні тайські дорами', regional('TH', 'th')),
             section('tw_popular', '🇹🇼 Популярні тайванські дорами', regional('TW', 'zh')),
+            section('new_popular', '🆕 Популярні новинки', regional(NEW_COUNTRIES.join('|'), null, {
+                first_air_date_gte: dateOffsetFrom(anchor, -NEW_DAYS),
+                first_air_date_lte: dateKey(anchor),
+                vote_count_gte: NEW_MIN_VOTES
+            }), 60 * 3),
             section('lgbt', '🏳️‍🌈 ЛГБТ-дорами', regional(DRAMA_COUNTRIES.join('|'), null, {
                 with_keywords: LGBT_KEYWORDS.join('|')
             }))
         ];
     }
 
-    function getSection(id) {
-        var sections = getSections();
+    function getSection(id, anchor) {
+        var sections = getSections(anchor);
         var i;
 
         for (i = 0; i < sections.length; i++) {
@@ -241,11 +264,20 @@
         };
     }
 
-    function allowedCard(card, section) {
+    function allowedCard(card, section, anchor) {
         var genres = card.genre_ids;
         if (card.adult === true || card.mal_id || NON_DRAMA_IDS.indexOf(card.id) !== -1) return false;
         if (!Array.isArray(genres) || !genres.some(function (id) { return FICTION_GENRES.indexOf(id) !== -1; })) return false;
         if (EXCLUDED_GENRES.some(function (id) { return genres.indexOf(id) !== -1; })) return false;
+        if (section.id === 'new_popular') {
+            if (!parseDateKey(card.first_air_date) || card.first_air_date < dateOffsetFrom(anchor, -NEW_DAYS) ||
+                card.first_air_date > dateKey(anchor)) return false;
+            if (!Array.isArray(card.origin_country) || !card.origin_country.some(function (country) {
+                return NEW_COUNTRIES.indexOf(country) !== -1;
+            })) return false;
+            if (!isFinite(Number(card.popularity)) || Number(card.popularity) < NEW_MIN_POPULARITY ||
+                !isFinite(Number(card.vote_count)) || Number(card.vote_count) < NEW_MIN_VOTES) return false;
+        }
         if (section.id === 'lgbt' && (!Array.isArray(card.origin_country) || !card.origin_country.some(function (country) {
             return DRAMA_COUNTRIES.indexOf(country) !== -1;
         }))) return false;
@@ -278,10 +310,18 @@
             item.id = id;
             /* These cards always originate from TMDB; keep details routed there. */
             item.source = 'tmdb';
-            if (allowedCard(item, section)) results.push(item);
+            if (allowedCard(item, section, anchor)) results.push(item);
         });
 
         output.results = results;
+        if (section.id === 'new_popular') {
+            output.latest_raw_count = inputResults.length;
+            // popularity.desc makes the score cutoff the end of the qualifying prefix.
+            output.latest_end = inputResults.some(function (card) {
+                return card && typeof card.popularity === 'number' && isFinite(card.popularity) &&
+                    card.popularity < NEW_MIN_POPULARITY;
+            });
+        }
         output.title = section.title;
         output.name = section.title;
         output.url = routeFor(section, anchor);
@@ -331,8 +371,8 @@
         }, onError, false, { cache: rowCache(section) });
     }
 
-    function catalogPage(section, anchor, page, onComplete, onError) {
-        var language = catalogLanguage();
+    function catalogPage(section, anchor, page, onComplete, onError, language) {
+        language = language || catalogLanguage();
         requestCatalog(section, page, language, function (json) {
             var output = normalize(json, section, page, anchor);
             var needsEnglish = language !== 'en-US' && language !== 'en' &&
@@ -357,15 +397,15 @@
         }, onError);
     }
 
-    function loadRow(section, anchor, onComplete, onError) {
+    function sectionPage(section, anchor, page, onComplete, onError, language) {
         var tmdb = Lampa.Api.sources.tmdb;
 
-        if (catalogAvailable()) return catalogPage(section, anchor, 1, onComplete, onError);
+        if (catalogAvailable()) return catalogPage(section, anchor, page, onComplete, onError, language);
 
         /* Compatibility path for horizontal category rows. */
         if (tmdb && typeof tmdb.get === 'function') {
-            tmdb.get(section.tmdb, { page: 1 }, function (json) {
-                onComplete(normalize(json, section, 1, anchor));
+            tmdb.get(section.tmdb, { page: page }, function (json) {
+                onComplete(normalize(json, section, page, anchor));
             }, function () {
                 if (onError) onError();
             }, rowCache(section));
@@ -376,15 +416,92 @@
         Lampa.Api.list({
             source: 'tmdb',
             url: section.tmdb,
-            page: 1
+            page: page
         }, function (json) {
-            onComplete(normalize(json, section, 1, anchor));
+            onComplete(normalize(json, section, page, anchor));
         }, function () {
             if (onError) onError();
         });
     }
 
+    function latestSnapshot(section, anchor, onComplete, onError) {
+        var language = catalogLanguage();
+        var key = section.tmdb + '|' + language;
+        var now = Date.now();
+        var existing;
+        latestCache.some(function (entry) {
+            if (entry.key === key && entry.expires > now) { existing = entry; return true; }
+            return false;
+        });
+        if (existing) return onComplete(existing.cards);
+        latestLoads.some(function (entry) {
+            if (entry.key === key) { existing = entry; return true; }
+            return false;
+        });
+        if (existing) {
+            existing.waiters.push({ ok: onComplete, error: onError });
+            return;
+        }
+        var load = { key: key, generation: latestGeneration, cards: [], seen: {}, page: 1,
+            waiters: [{ ok: onComplete, error: onError }] };
+        latestLoads.push(load);
+        function detach() {
+            var index = latestLoads.indexOf(load);
+            if (index !== -1) latestLoads.splice(index, 1);
+        }
+        function fail() {
+            if (load.generation !== latestGeneration) return;
+            detach();
+            // No partial shortlist is cached or reported as a completed snapshot.
+            load.waiters.forEach(function (waiter) { if (waiter.error) waiter.error(); });
+        }
+        function next() {
+            sectionPage(section, anchor, load.page, function (data) {
+                if (load.generation !== latestGeneration) return;
+                data.results.forEach(function (card) {
+                    if (load.seen[card.id] || load.cards.length >= NEW_MAX_PAGES * 20) return;
+                    load.seen[card.id] = true;
+                    load.cards.push(card);
+                });
+                if (data.latest_end || !data.latest_raw_count || load.page >= data.total_pages ||
+                    load.page >= NEW_MAX_PAGES || load.cards.length >= NEW_MAX_PAGES * 20) {
+                    detach();
+                    latestCache = latestCache.filter(function (entry) { return entry.key !== key && entry.expires > now; });
+                    latestCache.unshift({ key: key, expires: Date.now() + section.cache_life * 60000, cards: load.cards });
+                    if (latestCache.length > 2) latestCache.pop();
+                    load.waiters.forEach(function (waiter) { waiter.ok(load.cards); });
+                } else {
+                    load.page++;
+                    next();
+                }
+            }, fail, language);
+        }
+        next();
+    }
+
+    function latestResult(cards, section, anchor, page, row) {
+        // Recopy before native Card/UI can change data; recheck the now-available anime map.
+        var output = normalize({ results: cards }, section, page, anchor);
+        var count = output.results.length;
+        output.results = output.results.slice(row ? 0 : (page - 1) * 40, row ? 20 : page * 40);
+        output.total_results = count;
+        output.total_pages = Math.ceil(count / 40);
+        delete output.latest_raw_count;
+        delete output.latest_end;
+        return output;
+    }
+
+    function loadRow(section, anchor, onComplete, onError) {
+        if (section.id === 'new_popular') return latestSnapshot(section, anchor, function (cards) {
+            onComplete(latestResult(cards, section, anchor, 1, true));
+        }, onError);
+        sectionPage(section, anchor, 1, onComplete, onError);
+    }
+
     function loadPage(section, anchor, page, onComplete, onError) {
+        if (section.id === 'new_popular') return latestSnapshot(section, anchor, function (cards) {
+            onComplete(latestResult(cards, section, anchor, page, false));
+        }, onError);
         if (catalogAvailable()) {
             var first = (page - 1) * 2 + 1;
             var parts = [];
@@ -432,7 +549,7 @@
         var anchor = koreaCalendarDate(new Date());
         var parts = [];
 
-        getSections().forEach(function (item) {
+        getSections(anchor).forEach(function (item) {
             parts.push(function (call) {
                 loadRow(item, anchor, call, call);
             });
@@ -457,7 +574,7 @@
             return;
         }
 
-        sectionItem = getSection(route.id);
+        sectionItem = getSection(route.id, route.anchor);
         if (!sectionItem) {
             if (onError) onError();
             return;
@@ -467,6 +584,9 @@
     }
 
     function clear() {
+        latestGeneration++;
+        latestCache = [];
+        latestLoads = [];
         if (catalogNetwork) catalogNetwork.clear();
         catalogNetwork = null;
     }

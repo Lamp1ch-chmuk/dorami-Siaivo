@@ -130,9 +130,9 @@ var Lampa = {
             tmdb: {
                 get: function (url, params, ok, err, cache) {
                     var raw = {
-                        results: [{ id: rowCalls.length + 1, name: 'Drama ' + (rowCalls.length + 1), source: 'tmdb', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }],
+                        results: [{ id: rowCalls.length + 1, name: 'Drama ' + (rowCalls.length + 1), source: 'tmdb', genre_ids: [18], first_air_date: '2026-09-01', popularity: 20, vote_count: 200, origin_country: ['KR'] }],
                         page: 1,
-                        total_pages: 9,
+                        total_pages: url.indexOf('first_air_date.gte') >= 0 ? 1 : 9,
                         total_results: 180,
                         source: 'tmdb',
                         url: url
@@ -147,7 +147,7 @@ var Lampa = {
         list: function (params, ok) {
             listCalls.push(params);
             ok({
-                results: [{ id: 999, name: 'Page card', source: 'tmdb', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }],
+                results: [{ id: 999, name: 'Page card', source: 'tmdb', genre_ids: [18], first_air_date: '2026-09-01', popularity: 20, vote_count: 200, origin_country: ['KR'] }],
                 page: params.page,
                 total_pages: 4,
                 total_results: 80,
@@ -247,8 +247,8 @@ assert.strictEqual(rowCalls.length, 4, 'initial category load must fetch only 4 
 assert.strictEqual(listCalls.length, 0, 'initial rows must not use category_full list path');
 assert.strictEqual(batch.length, 4);
 
-/* Load the remaining lazy batches: 4 + 2 = 6 sections. */
-while (!exhausted && allRows.length < 6) {
+/* Load the remaining lazy batches: 4 + 3 = 7 sections. */
+while (!exhausted && allRows.length < 7) {
     batch = null;
     nextLoader(function (rows) {
         batch = rows;
@@ -259,8 +259,8 @@ while (!exhausted && allRows.length < 6) {
     if (!batch && !exhausted) throw new Error('lazy loader neither loaded nor exhausted');
 }
 
-assert.strictEqual(allRows.length, 6, 'all configured dorama sections must be reachable');
-assert.strictEqual(rowCalls.length, 6, 'all 6 rows should require one first-page TMDB request each');
+assert.strictEqual(allRows.length, 7, 'all configured dorama sections must be reachable');
+assert.strictEqual(rowCalls.length, 7, 'all 7 rows should require one first-page TMDB request each');
 
 assert.ok(/^siaivo-dorama:2026-10-02:/.test(allRows[0].url), 'route anchor must use the Seoul calendar date, not device-local date');
 
@@ -291,7 +291,7 @@ allRows.forEach(function (row, index) {
     assert.strictEqual(row.results[0].source, 'tmdb', 'card source must remain TMDB');
     assert.strictEqual(rowCalls[index].url.indexOf('discover/tv?'), 0, 'all rows must use TMDB Discover TV');
     assert.strictEqual(params.include_adult, 'false');
-    assert.strictEqual(params.include_null_first_air_dates, 'true');
+    assert.strictEqual(params.include_null_first_air_dates, index === 5 ? 'false' : 'true');
     assert.strictEqual(!!allowedSorts[params.sort_by], true, 'sort_by must be a documented Discover TV sort');
 
     /* Important: plugin row metadata must not poison TMDB/Request cached object. */
@@ -302,7 +302,8 @@ allRows.forEach(function (row, index) {
     assert.notStrictEqual(row.results, rawRowResponses[index].results);
 });
 
-rowCalls.forEach(function (call) {
+rowCalls.forEach(function (call, index) {
+    if (index === 5) return;
     var params = queryParams(call.url);
     assert.strictEqual(call.cache.life, 60 * 6, 'all popular catalogs refresh in six hours');
     assert.strictEqual(params.sort_by, 'popularity.desc', 'rank current user interest, not year or rating');
@@ -312,7 +313,7 @@ rowCalls.forEach(function (call) {
     });
 });
 assert.deepStrictEqual(allRows.map(function (row) { return row.url.split(':').pop(); }),
-    ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular', 'tw_popular', 'lgbt']);
+    ['kr_popular', 'cn_popular', 'jp_popular', 'th_popular', 'tw_popular', 'new_popular', 'lgbt']);
 
 /* Broad fiction OR includes crime and comedy without forcing Drama genre 18. */
 assert.strictEqual(queryParams(rowCalls[0].url).with_type, '2|4', 'base dorama filter must include miniseries|scripted');
@@ -355,4 +356,4 @@ assert.strictEqual(typeof Lampa.ContentRows, 'undefined');
 assert.strictEqual(typeof Lampa.SettingsApi, 'undefined');
 assert.strictEqual(typeof Lampa.Storage, 'undefined');
 
-console.log('OK: all 6 rows, Seoul-day anchoring, stable menu identity, routing and filters passed');
+console.log('OK: all 7 rows, Seoul-day anchoring, stable menu identity, routing and filters passed');

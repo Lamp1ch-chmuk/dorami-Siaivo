@@ -29,7 +29,7 @@ const server = http.createServer(async (req, res) => {
 
 function card(id) {
     return { id, name: 'Тестова дорама ' + id, original_name: 'Test Drama',
-        original_language: 'ko', first_air_date: '2024-01-01', genre_ids: [18],
+        original_language: 'ko', first_air_date: '2024-01-01', genre_ids: [18], popularity: 20,
         vote_count: 200, vote_average: 8, overview: 'Тестовий опис',
         poster_path: '/test.jpg', backdrop_path: '/test.jpg' };
 }
@@ -73,12 +73,15 @@ async function main() {
                 if (offline) return route.abort();
                 const query = new URL(url).searchParams;
                 const n = Number(query.get('page')) || 1;
+                const newest = query.has('first_air_date.gte');
                 discover.push({ page: n, country: query.get('with_origin_country'), language: query.get('language') });
                 // Reversed response delays exercise real Progress ordering.
                 await new Promise(resolve => setTimeout(resolve, n % 2 ? 30 : 5));
                 return route.fulfill({ json: { page: n, total_pages: 8, total_results: 160,
                     results: Array.from({ length: 20 }, (_, i) => ({
-                        ...card(n * 100 + i), vote_count: 0, first_air_date: i === 2 ? '' : i % 3 === 0 ? '2005-01-01' : i % 3 === 1 ? '2018-01-01' : '2026-01-01', genre_ids: [18, 10766],
+                        ...card(n * 100 + i), vote_count: newest ? 3 : 0,
+                        first_air_date: newest ? '2026-09-01' : i === 2 ? '' : i % 3 === 0 ? '2005-01-01' : i % 3 === 1 ? '2018-01-01' : '2026-01-01',
+                        popularity: newest && n === 3 && i >= 6 ? 9 : 100 - n, genre_ids: [18, 10766],
                         origin_country: [query.get('with_origin_country').split('|')[i % query.get('with_origin_country').split('|').length]],
                         original_name: '새 드라마',
                         name: i % 4 === 0 ? (query.get('language') === 'en-US' ? 'English Drama ' + (n * 100 + i) + ' r' + revision : '새 드라마')
@@ -188,7 +191,7 @@ async function main() {
         await page.evaluate(() => Lampa.Activity.backward());
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
         assert.equal(await page.locator(menu).count(), 1);
-        // Native lazy loading appends the remaining Taiwanese and shared LGBT rows.
+        // Native lazy loading appends the remaining Taiwanese, popular-newest and shared LGBT rows.
         await page.evaluate(() => {
             const comp = Lampa.Activity.active().activity.component;
             comp.builded_time = 0;
@@ -198,7 +201,7 @@ async function main() {
             const comp = Lampa.Activity.active().activity.component;
             // Each native scroll-animation completion appends one queued row.
             if (comp.loaded.length) comp.scroll.onAnimateEnd();
-            return comp.items.length === 6;
+            return comp.items.length === 7;
         }, null, { timeout: 5000 }).catch(async error => {
             console.error('Lazy rows:', await page.evaluate(() => {
                 const c = Lampa.Activity.active().activity.component;
@@ -208,11 +211,38 @@ async function main() {
         });
         const allTitles = await page.evaluate(() => Lampa.Activity.active().activity.component.items.map(i => i.data.title));
         assert.match(allTitles[4], /Популярні тайванські/);
-        assert.match(allTitles[5], /ЛГБТ-дорами/);
-        // Focus the last native line so off-screen cards/More finish lazy rendering.
+        assert.match(allTitles[5], /Популярні новинки/);
+        assert.match(allTitles[6], /ЛГБТ-дорами/);
+        const beforeNewest = discover.length;
         await page.evaluate(() => Lampa.Activity.active().activity.component.items[5].toggle());
-        // Open the single mixed-country LGBT row through its actual native More control.
         await page.locator('.items-line__more').nth(5).dispatchEvent('hover:enter');
+        await page.waitForFunction(() => Lampa.Activity.active().component === 'category_full'
+            && Lampa.Activity.active().activity.component.items.length === 40);
+        const newest = await page.evaluate(() => ({
+            route: Lampa.Activity.active().url,
+            pages: Lampa.Activity.active().activity.component.total_pages,
+            cards: Lampa.Activity.active().activity.component.items.map(item => item.data)
+        }));
+        assert.match(newest.route, /:new_popular$/);
+        assert.equal(newest.pages, 2);
+        assert.equal(new Set(newest.cards.flatMap(card => card.origin_country)).size, 5);
+        assert.ok(newest.cards.every(card => card.vote_count >= 3 && card.first_air_date === '2026-09-01'));
+        await page.evaluate(() => new Promise((resolve, reject) => {
+            const comp = Lampa.Activity.active().activity.component;
+            comp.object.page = 2;
+            comp.emit('next', data => {
+                if (data.results.length !== 6 || data.total_results !== 46 || data.total_pages !== 2)
+                    return reject(new Error('Expected exact 46-card shortlist end'));
+                resolve();
+            }, () => reject(new Error('Newest pagination failed')));
+        }));
+        assert.equal(discover.length, beforeNewest, 'newest row and both grid pages reuse the shortlist');
+        await page.evaluate(() => Lampa.Activity.backward());
+        await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
+        // Focus the last native line so off-screen cards/More finish lazy rendering.
+        await page.evaluate(() => Lampa.Activity.active().activity.component.items[6].toggle());
+        // Open the single mixed-country LGBT row through its actual native More control.
+        await page.locator('.items-line__more').nth(6).dispatchEvent('hover:enter');
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category_full'
             && Lampa.Activity.active().activity.component.items.length === 40);
         const lgbt = await page.evaluate(() => ({
@@ -245,6 +275,23 @@ async function main() {
         assert.equal(discover.length - beforeRefresh, 8, 'four expired rows and their translations refresh');
         assert.ok(refreshed.every(name => /r1$/.test(name)));
 
+        const beforeNewestRefresh = discover.length;
+        async function readNewestAfter(hours) {
+            return page.evaluate(async ({ hours, route }) => {
+                const originalNow = Date.now;
+                Date.now = () => originalNow() + hours * 3600000 + 1000;
+                try {
+                    return await new Promise((resolve, reject) => Lampa.Api.sources.plugin_siaivo_dorama.list({
+                        url: route, page: 1
+                    }, data => resolve(data.results[0].name), () => reject(new Error('Newest refresh failed'))));
+                } finally { Date.now = originalNow; }
+            }, { hours, route: newest.route });
+        }
+        assert.match(await readNewestAfter(2), /r0$/);
+        assert.equal(discover.length, beforeNewestRefresh);
+        assert.match(await readNewestAfter(3), /r1$/);
+        assert.equal(discover.length - beforeNewestRefresh, 6, 'three expired raw newest pages and English titles');
+
         offline = true;
         const offlineRows = await page.evaluate(async () => {
             const originalNow = Date.now;
@@ -259,11 +306,11 @@ async function main() {
         // Reusing the identical entry after app restart loads newer code, including with
         // GitHub Raw's real text/plain + nosniff response policy.
         offline = false;
-        deliveredVersion = '0.7.1'; // synthetic next release fixture
+        deliveredVersion = '0.8.1'; // synthetic next release fixture
         await page.reload();
         await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
         await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
-            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.7.1');
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.8.1');
         assert.equal(await page.locator(menu).count(), 1);
         assert.equal(codeRequests.length, 2);
         assert.equal(new URL(codeRequests[0]).pathname, new URL(codeRequests[1]).pathname);
@@ -273,13 +320,13 @@ async function main() {
         await page.reload();
         await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
         await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
-            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.7.1');
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.8.1');
         assert.equal(await page.locator(menu).count(), 1);
         assert.equal(codeRequests.length, 3, 'saved newest code used without requesting older CDN');
 
         assert.deepEqual(errors, [], 'uncaught browser errors');
         assert.deepEqual(warnings, [], 'native rendering/task errors');
-        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, mixed-country LGBT More, mapped anime exclusion, TV details, Back, shared cache, TTL expiry, permanent loader update and offline fallback; fixture TMDB/code data');
+        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, five-country newest shortlist and exact end, mixed-country LGBT More, mapped anime exclusion, TV details, Back, shared cache, TTL expiry, permanent loader update and offline fallback; fixture TMDB/code data');
     } finally { await browser.close(); }
 }
 
