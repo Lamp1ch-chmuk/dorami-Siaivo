@@ -10,6 +10,9 @@ npm test
 Авторський код `siaivo-dorama.js` має залишатися ES5. Сучасний JavaScript дозволений
 у Node-тестах. Тести перевіряють ES5 справжнім парсером Acorn.
 
+Після зміни `siaivo-dorama.js` синхронізуй короткий URL: `cp siaivo-dorama.js d.js`.
+CI перевіряє, що обидва файли ідентичні.
+
 Для браузерної перевірки див. [опис аудиту](docs/AUDIT.md). На GitHub її можна
 запустити вручну: Actions → Siaivo browser smoke → Run workflow.
 

@@ -4,6 +4,9 @@
 
 Плагін для актуальної Siaivo / Lampa 3.x, який додає **одну окрему категорію «Дорами» в ліву навігацію**.
 
+**Короткий URL для підключення:**
+[cdn.jsdelivr.net/gh/Lamp1ch-chmuk/dorami-Siaivo@main/d.js](https://cdn.jsdelivr.net/gh/Lamp1ch-chmuk/dorami-Siaivo@main/d.js)
+
 Плагін **нічого не додає на головну сторінку**.
 
 ## Версія
@@ -115,6 +118,15 @@ Siaivo сама підхоплює динамічно доданий `.selector`
 - чужий custom source з тим самим ID не перезаписується.
 
 ## Встановлення
+
+Коротка адреса поточної версії для **публічного** репозиторію:
+
+```text
+https://cdn.jsdelivr.net/gh/Lamp1ch-chmuk/dorami-Siaivo@main/d.js
+```
+
+`d.js` — повна копія `siaivo-dorama.js`, а не завантажувач чи сторінка редиректу.
+Цей URL слідує гілці `main`; оновлення CDN може з'являтися із затримкою.
 
 Для **публічного** репозиторію можна використати URL версії через jsDelivr:
 
