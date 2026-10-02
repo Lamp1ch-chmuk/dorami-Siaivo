@@ -1,0 +1,23 @@
+name: Siaivo browser smoke
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npx --no-install playwright install --with-deps chromium
+      - name: Fetch audited Siaivo build
+        run: |
+          git init /tmp/siaivo-upstream
+          git -C /tmp/siaivo-upstream remote add origin https://github.com/Siaivo/siaivo.github.io.git
+          git -C /tmp/siaivo-upstream fetch --depth=1 origin 94e370e7102e6361e47c131448c2e1d2a6714fb7
+          git -C /tmp/siaivo-upstream checkout --detach FETCH_HEAD
+      - run: npm run test:browser

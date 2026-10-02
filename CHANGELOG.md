@@ -1,0 +1,84 @@
+# Changelog
+
+## 0.4.1 — 2026-10-02
+
+### Виправлено
+
+- Пошкоджені картки (`null`, примітиви, масиви, відсутній/некоректний TMDB ID)
+  більше не потрапляють у штатний Card/Router.
+- Нескінченні значення page/total_pages/total_results після parseInt більше не
+  приймаються. Валідний `total_pages=0` збережено для порожньої відповіді.
+- Чужий source не перезаписується навіть за наявності однойменного plugin marker.
+- Конфлікт menu action діагностується також для пунктів без `data-plugin`.
+
+### Перевірки й репозиторій
+
+- Додано 16 сценаріїв життєвого циклу, мережевих помилок, fallback, порядку
+  асинхронних відповідей, повторного входу, дат, некоректних даних і конфліктів.
+- ES5 перевіряється парсером Acorn; devDependencies зафіксовано в lockfile.
+- Додано браузерний smoke-тест з реальним кодом Siaivo та підставленими TMDB-даними.
+- Додано GitHub Actions, інструкції розробки та [звіт аудиту](docs/AUDIT.md).
+
+## 0.4.0 — 2026-10-02
+
+Повний повторний аудит від bootstrap до TMDB pagination проти актуальної Siaivo `3.3.4.29` / Lampa 3.x.
+
+### Виправлено
+
+- Назва лівого menu item тепер завжди `Дорами`. Це навмисно: поточна Siaivo зберігає порядок/приховування пунктів за видимим текстом, тому локалізована `Дорами ↔ Дорамы` робила menu state нестабільним.
+- Date-sensitive корейські рядки тепер прив'язані до **календарної дати Сеула**, а не локальної дати пристрою.
+- Для `air_date.gte/lte` додано `timezone=Asia/Seoul`.
+- KST-дата обчислюється як UTC+9 без `Intl`, щоб не погіршувати сумісність зі старими TV WebView.
+- `rowCache()` більше не підмінює допустиме numeric `cache_life=0` дефолтним значенням через `||`.
+- Карткам після копіювання безумовно ставиться `source: 'tmdb'`, щоб details/person/seasons завжди йшли штатним TMDB source.
+- Логування більше не залежить від `console.*.apply`, яке може бути проблемним для host-функцій старих WebView.
+- Додано діагностику конфлікту, якщо namespaced menu action уже зайнятий іншим плагіном.
+- Посилено нормалізацію `page`, `total_pages`, `total_results`.
+
+### Перевірено й залишено без змін
+
+- `Lampa.Api.partNext` зберігає порядок рядків: актуальний `Progress` записує результат за індексом задачі.
+- `clear()` custom source лишається порожнім: глобальний `Lampa.Api.clear()` сам проходить по всіх sources і окремо очищає штатний TMDB/network.
+- `Api.list()` навмисно лишився шляхом для `category_full`, бо Siaivo патчить Discover grid і зливає дві TMDB-сторінки на view-page.
+- custom source не реалізує `full/person/seasons`: картки `source: 'tmdb'` і штатний Router/Lampa API роблять це самі.
+- окремий settings-toggle не додано: поточний Siaivo menu editor через MutationObserver підхоплює динамічно доданий menu selector.
+
+### Документовано
+
+- Плагін успадковує глобальний Discover-filter Siaivo: hard vote floor, readable-title filter, anime exclusion, `Soap (10766)` exclusion та 2:1 page merge. Через це частина нішевих/щоденних дорам може бути прихована політикою самої Siaivo.
+- Повний grid використовує нативний `tmdb.list()` cache; короткі горизонтальні рядки мають власні freshness-aware cache life.
+
+### Тести
+
+- усі 14 секцій повинні бути досяжні через lazy batches `4 + 4 + 4 + 2`;
+- перевіряється KST boundary: `2026-10-01 16:30 UTC` має дати anchor `2026-10-02`;
+- перевіряється `timezone=Asia/Seoul` у date-sensitive queries;
+- перевіряється non-mutating TMDB response;
+- перевіряється stable dated pagination;
+- перевіряється namespaced menu/source routing;
+- перевіряється ES5-style і відсутність deprecated/home-injection API.
+
+## 0.3.1 — 2026-10-02
+
+- `Онгоїнги` вимагають status `Returning/In Production` + episode `air_date` у вікні ±21 день.
+- `Fantasy` перейменовано на `Фентезі та фантастика`.
+- уточнено назви Netflix/Mystery рядків.
+
+## 0.3.0 — 2026-10-02
+
+- TMDB response більше не мутується при перетворенні на custom row.
+- namespaced source/menu/root route.
+- dated route для стабільної пагінації.
+- bounded boot retry.
+- базові каталоги перейшли з глобального `Drama (18)` на `with_type=2|4` + `without_genres=16`.
+- cache life рядків диференційовано за динамічністю.
+
+## 0.2.0
+
+- прибрані рядки з головної сторінки;
+- окрема категорія `Дорами` в лівому меню;
+- lazy rows через `Lampa.Api.partNext`;
+- `TMDB.get` для горизонтальних рядків;
+- `Api.list` для category_full;
+- картки залишені на штатному `tmdb` source;
+- прибраний глобальний monkey-patch `Activity.push`.
