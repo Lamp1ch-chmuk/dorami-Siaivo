@@ -1,6 +1,6 @@
 /*
  * Siaivo Dorama for Lampa 3.x / Siaivo
- * Version: 0.5.1
+ * Version: 0.6.0
  *
  * One left-navigation category: "Дорами".
  * Nothing is injected into the home/main screen.
@@ -21,7 +21,7 @@
 
     var PLUGIN_ID = 'siaivo_dorama';
     var SOURCE_ID = 'plugin_siaivo_dorama';
-    var VERSION = '0.5.1';
+    var VERSION = '0.6.0';
     var MENU_ACTION = 'plugin_siaivo_dorama';
     var MENU_TITLE = 'Дорами';
     var KOREA_TIMEZONE = 'Asia/Seoul';
@@ -30,7 +30,13 @@
     var ROUTE_PREFIX = ROOT_ROUTE + ':';
     var PARTS_LIMIT = 4;
     var catalogNetwork;
-    var EXCLUDED_GENRES = [16, 99, 10763, 10764, 10767];
+    var EXCLUDED_GENRES = [16, 99, 10762, 10763, 10764, 10767];
+    var FICTION_GENRES = [18, 35, 80, 9648, 10759, 10765, 10751, 10766, 10768];
+    // TMDB keyword IDs verified against search/keyword, not guessed from titles.
+    var EXCLUDED_KEYWORDS = [210024, 317204]; // anime, tokusatsu
+    var LGBT_KEYWORDS = [158718, 289844, 384569, 365317, 280003, 383699, 240305, 319872, 353629, 351185];
+    var DRAMA_COUNTRIES = ['KR', 'JP', 'TH', 'CN', 'TW', 'HK', 'PH', 'VN', 'SG'];
+    var CATALOG_START = '2015-01-01';
     var FOREIGN_TITLE = /[^\u0000-\u036f\u0400-\u052f\u1e00-\u1eff\u2000-\u2bff\u3000-\u303f\ud800-\udfff\ufe0f]/;
     var DEFAULT_CACHE_LIFE = 60 * 24;
     var START_FLAG = '__' + PLUGIN_ID + '_started';
@@ -162,14 +168,15 @@
         if (options.vote_average_gte !== undefined) params['vote_average.gte'] = options.vote_average_gte;
         if (options.vote_count_gte !== undefined) params['vote_count.gte'] = options.vote_count_gte;
         if (options.with_keywords) params.with_keywords = options.with_keywords;
+        if (options.without_keywords) params.without_keywords = options.without_keywords;
 
         return buildQuery('discover/tv', params);
     }
 
     /*
      * "Dorama" is not identical to TMDB genre Drama (18).
-     * Base regional catalogs use Miniseries OR Scripted and exclude animation, documentaries, news, reality and talk shows.
-     * Genre filtering is added only for thematic rows.
+     * Require fiction genres and Miniseries OR Scripted, with explicit exclusions.
+     * A broad fiction OR preserves comedy, crime and daily dramas without forcing genre 18.
      */
     function regional(country, language, extra) {
         var options = {};
@@ -184,6 +191,8 @@
         options.language = language;
         if (!options.with_type) options.with_type = '2|4';
         if (!options.without_genres) options.without_genres = EXCLUDED_GENRES.join(',');
+        if (!options.with_genres) options.with_genres = FICTION_GENRES.join('|');
+        if (!options.without_keywords) options.without_keywords = EXCLUDED_KEYWORDS.join(',');
 
         return dramaQuery(options);
     }
@@ -192,11 +201,22 @@
         return regional('KR', 'ko', extra);
     }
 
+    function balanced(anchor, extra) {
+        var options = copyObject(extra);
+        options.first_air_date_gte = CATALOG_START;
+        options.first_air_date_lte = dateOffsetFrom(anchor, 0);
+        if (options.vote_count_gte === undefined) options.vote_count_gte = 10;
+        return options;
+    }
+
     function section(id, title, tmdb, cacheLife) {
         return {
             id: id,
             title: title,
             tmdb: tmdb,
+            first_from: queryValue(tmdb, 'first_air_date.gte'),
+            first_until: queryValue(tmdb, 'first_air_date.lte'),
+            minimum_votes: Number(queryValue(tmdb, 'vote_count.gte')),
             cache_life: typeof cacheLife === 'number' ? cacheLife : DEFAULT_CACHE_LIFE
         };
     }
@@ -208,7 +228,7 @@
             section(
                 'kr_popular',
                 '🇰🇷 Популярні корейські дорами',
-                korean({ sort_by: 'popularity.desc' }),
+                korean(balanced(anchor, { sort_by: 'popularity.desc' })),
                 60 * 12
             ),
             section(
@@ -236,87 +256,86 @@
                 60 * 2
             ),
             section(
-                'kr_new',
-                '🆕 Нові корейські дорами',
-                korean({
-                    sort_by: 'first_air_date.desc',
-                    first_air_date_gte: dateOffsetFrom(anchor, -180),
-                    first_air_date_lte: today
-                }),
-                60 * 6
+                'lgbt',
+                '🏳️‍🌈 ЛГБТ-дорами',
+                regional(DRAMA_COUNTRIES.join('|'), null, balanced(anchor, {
+                    with_keywords: LGBT_KEYWORDS.join('|'),
+                    vote_count_gte: 5
+                })),
+                60 * 12
             ),
             section(
                 'kr_top',
                 '⭐ Корейські дорами з високим рейтингом',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'vote_average.desc',
                     vote_average_gte: 7.5,
                     vote_count_gte: 100
-                }),
+                })),
                 60 * 24 * 3
             ),
             section(
                 'kr_comedy',
                 '😂 Комедійні дорами',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'popularity.desc',
                     with_genres: '35'
-                })
+                }))
             ),
             section(
                 'kr_mystery',
                 '🕵️ Детективи та таємниці',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'popularity.desc',
                     with_genres: '9648'
-                })
+                }))
             ),
             section(
                 'kr_fantasy',
                 '✨ Фентезі та фантастика',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'popularity.desc',
                     with_genres: '10765'
-                })
+                }))
             ),
             section(
                 'kr_netflix',
                 '🎬 Netflix • корейські серіали',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'popularity.desc',
                     with_networks: '213'
-                })
+                }))
             ),
             section(
                 'kr_tvn',
                 '📡 tvN',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'popularity.desc',
                     with_networks: '866'
-                })
+                }))
             ),
             section(
                 'kr_jtbc',
                 '📡 JTBC',
-                korean({
+                korean(balanced(anchor, {
                     sort_by: 'popularity.desc',
                     with_networks: '885'
-                })
+                }))
             ),
             section(
                 'cn_popular',
                 '🇨🇳 Китайські дорами',
-                regional('CN', 'zh', { sort_by: 'popularity.desc' })
+                regional('CN', 'zh', balanced(anchor, { sort_by: 'popularity.desc' }))
             ),
             section(
                 'jp_popular',
                 '🇯🇵 Японські дорами',
-                regional('JP', 'ja', { sort_by: 'popularity.desc' })
+                regional('JP', 'ja', balanced(anchor, { sort_by: 'popularity.desc' }))
             ),
             section(
                 'th_popular',
                 '🇹🇭 Тайські дорами',
-                regional('TH', 'th', { sort_by: 'popularity.desc' })
+                regional('TH', 'th', balanced(anchor, { sort_by: 'popularity.desc' }))
             )
         ];
     }
@@ -357,6 +376,42 @@
         };
     }
 
+    function queryValue(query, name) {
+        var parts = query.split('?')[1].split('&');
+        var i;
+        for (i = 0; i < parts.length; i++) {
+            var pair = parts[i].split('=');
+            if (decodeURIComponent(pair[0]) === name) return decodeURIComponent(pair[1] || '');
+        }
+        return '';
+    }
+
+    function allowedCard(card, section) {
+        var genres = card.genre_ids;
+        var first = card.first_air_date;
+        var from = section.first_from;
+        var until = section.first_until;
+        var votes = section.minimum_votes;
+        if (card.adult === true || card.mal_id) return false;
+        if (!Array.isArray(genres) || !genres.some(function (id) { return FICTION_GENRES.indexOf(id) !== -1; })) return false;
+        if (EXCLUDED_GENRES.some(function (id) { return genres.indexOf(id) !== -1; })) return false;
+        if (from || until) {
+            if (!parseDateKey(first) || (from && first < from) || (until && first > until)) return false;
+        }
+        if (votes && (!isFinite(Number(card.vote_count)) || Number(card.vote_count) < votes)) return false;
+        if (section.id === 'lgbt' && (!Array.isArray(card.origin_country) || !card.origin_country.some(function (country) {
+            return DRAMA_COUNTRIES.indexOf(country) !== -1;
+        }))) return false;
+        // Use Siaivo's existing anime map via its public helper. Identity-only TV probe
+        // avoids its cold-map heuristic that treats every Japanese title as anime.
+        if (Lampa.Utils && typeof Lampa.Utils.isAnime === 'function') {
+            try {
+                if (Lampa.Utils.isAnime({ id: card.id, first_air_date: 'tv' })) return false;
+            } catch (error) { /* Older helper variants: server/genre exclusions still apply. */ }
+        }
+        return true;
+    }
+
     function normalize(json, section, page, anchor) {
         var output = copyObject(json || {});
         var inputResults = json && Array.isArray(json.results) ? json.results : [];
@@ -376,7 +431,7 @@
             item.id = id;
             /* These cards always originate from TMDB; keep details routed there. */
             item.source = 'tmdb';
-            results.push(item);
+            if (allowedCard(item, section)) results.push(item);
         });
 
         output.results = results;
@@ -442,10 +497,6 @@
                     if (card && readableTitle(card)) titles[card.id] = card.name || card.original_name;
                 });
                 output.results = output.results.filter(function (card) {
-                    // Keep the catalog's explicit safety/type exclusions even for bad upstream data.
-                    if (card.adult === true || EXCLUDED_GENRES.some(function (id) {
-                        return Array.isArray(card.genre_ids) && card.genre_ids.indexOf(id) !== -1;
-                    })) return false;
                     if (!readableTitle(card) && titles[card.id]) card.name = titles[card.id];
                     if (!card.name) card.name = card.original_name || ('TMDB ' + card.id);
                     if (!card.original_name) card.original_name = card.name;

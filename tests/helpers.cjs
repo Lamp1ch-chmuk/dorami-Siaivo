@@ -44,7 +44,7 @@ function harness(options = {}) {
         };
     }
     const response = page => ({ page, total_pages: 8, total_results: 160,
-        results: [{ id: 1, name: 'Test Drama', original_name: 'Test Drama', source: 'foreign' }] });
+        results: [{ id: 1, name: 'Test Drama', original_name: 'Test Drama', source: 'foreign', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] });
     function request(kind, url, params, ok, error, cache) {
         const call = { kind, url, params, ok, error, cache };
         state.requests.push(call);

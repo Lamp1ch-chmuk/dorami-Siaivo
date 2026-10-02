@@ -130,7 +130,7 @@ var Lampa = {
             tmdb: {
                 get: function (url, params, ok, err, cache) {
                     var raw = {
-                        results: [{ id: rowCalls.length + 1, name: 'Drama ' + (rowCalls.length + 1), source: 'tmdb' }],
+                        results: [{ id: rowCalls.length + 1, name: 'Drama ' + (rowCalls.length + 1), source: 'tmdb', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }],
                         page: 1,
                         total_pages: 9,
                         total_results: 180,
@@ -147,7 +147,7 @@ var Lampa = {
         list: function (params, ok) {
             listCalls.push(params);
             ok({
-                results: [{ id: 999, name: 'Page card', source: 'tmdb' }],
+                results: [{ id: 999, name: 'Page card', source: 'tmdb', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }],
                 page: params.page,
                 total_pages: 4,
                 total_results: 80,
@@ -315,10 +315,10 @@ assert.strictEqual(ongoingParams.with_status, '0|2', 'ongoing row must use activ
 assert.ok(ongoingParams['air_date.gte'] && ongoingParams['air_date.lte'], 'ongoing row must also use an airing-date window');
 assert.strictEqual(queryParams(rowCalls[0].url).timezone, undefined, 'timezone is unnecessary for rows without air_date filters');
 
-/* Broad dorama catalogs should use Scripted|Miniseries, not force Drama genre 18. */
+/* Broad fiction OR includes crime and comedy without forcing Drama genre 18. */
 assert.strictEqual(queryParams(rowCalls[0].url).with_type, '2|4', 'base dorama filter must include miniseries|scripted');
-assert.strictEqual(queryParams(rowCalls[0].url).without_genres, '16,99,10763,10764,10767', 'base dorama filter should exclude non-fiction and animation');
-assert.strictEqual(queryParams(rowCalls[0].url).with_genres, undefined, 'base dorama filter must not require Drama genre');
+assert.strictEqual(queryParams(rowCalls[0].url).without_genres, '16,99,10762,10763,10764,10767', 'base dorama filter should exclude non-fiction and animation');
+assert.strictEqual(queryParams(rowCalls[0].url).with_genres, '18|35|80|9648|10759|10765|10751|10766|10768', 'base dorama filter should cover fiction genres');
 
 /* Pagination: dated custom route -> public Api.list(TMDb) -> custom route, native cards. */
 var pageResult;

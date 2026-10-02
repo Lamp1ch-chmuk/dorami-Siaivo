@@ -68,6 +68,7 @@ async function main() {
                     'x-content-type-options': 'nosniff', 'access-control-allow-origin': '*' },
                     body: payload.replaceAll(currentVersion, deliveredVersion) });
             }
+            if (url.endsWith('/anime/map.json')) return route.fulfill({ json: { tv: { '900001': [1] }, movie: {} } });
             if (url.includes('discover/tv')) {
                 if (offline) return route.abort();
                 const query = new URL(url).searchParams;
@@ -77,11 +78,12 @@ async function main() {
                 await new Promise(resolve => setTimeout(resolve, n % 2 ? 30 : 5));
                 return route.fulfill({ json: { page: n, total_pages: 8, total_results: 160,
                     results: Array.from({ length: 20 }, (_, i) => ({
-                        ...card(n * 100 + i), vote_count: 0, genre_ids: [18, 10766],
+                        ...card(n * 100 + i), vote_count: query.has('air_date.gte') ? 0 : 200, genre_ids: [18, 10766],
+                        origin_country: [query.get('with_origin_country').split('|')[i % query.get('with_origin_country').split('|').length]],
                         original_name: '새 드라마',
                         name: i % 4 === 0 ? (query.get('language') === 'en-US' ? 'English Drama ' + (n * 100 + i) + ' r' + revision : '새 드라마')
                             : 'Тестова дорама ' + (n * 100 + i) + ' r' + revision
-                    })) } });
+                    })).concat([{ ...card(900001), origin_country: ['JP'], original_language: 'ja', name: 'Mapped anime with wrong Drama genre' }]) } });
             }
             const details = /\/tv\/(\d+)(?:\?|$)/.exec(url);
             if (details) return route.fulfill({ json: {
@@ -125,6 +127,7 @@ async function main() {
         assert.equal(codeRequests.length, 1, 'one fresh code request per startup');
         await page.addScriptTag({ url: origin + '/d.js' });
         assert.equal(codeRequests.length, 1, 'loader reinjection does not download twice');
+        await page.waitForFunction(() => Lampa.Utils.isAnime({ id: 900001, first_air_date: 'tv' }));
         await page.locator(menu).dispatchEvent('hover:enter');
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category'
             && Lampa.Activity.active().activity.component.items.length === 4);
@@ -134,10 +137,10 @@ async function main() {
         assert.match(titles[0], /Популярні корейські/);
         assert.match(titles[1], /новими серіями/);
         assert.match(titles[2], /онгоїнги/);
-        assert.match(titles[3], /Нові корейські/);
+        assert.match(titles[3], /ЛГБТ-дорами/);
 
         const rowCards = await page.evaluate(() => Lampa.Activity.active().activity.component.items.map(i => i.data.results));
-        assert.ok(rowCards.every(cards => cards.length === 20), 'zero-vote/daily dramas must fill all four rows');
+        assert.ok(rowCards.every(cards => cards.length === 20), 'fresh zero-vote/daily and balanced LGBT dramas fill four rows without mapped anime');
         assert.equal(rowCards[3][0].name, 'English Drama 100 r0', 'page-level English title fallback');
         assert.equal(rowCards[3][1].name, 'Тестова дорама 101 r0', 'local title preserved');
         assert.equal(rowCards[3][0].original_name, '새 드라마');
@@ -183,6 +186,20 @@ async function main() {
         await page.evaluate(() => Lampa.Activity.backward());
         await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
         assert.equal(await page.locator(menu).count(), 1);
+        // Open the single mixed-country LGBT row through its actual native More control.
+        await page.locator('.items-line__more').nth(3).dispatchEvent('hover:enter');
+        await page.waitForFunction(() => Lampa.Activity.active().component === 'category_full'
+            && Lampa.Activity.active().activity.component.items.length === 40);
+        const lgbt = await page.evaluate(() => ({
+            route: Lampa.Activity.active().url,
+            cards: Lampa.Activity.active().activity.component.items.map(item => item.data)
+        }));
+        assert.match(lgbt.route, /:lgbt$/);
+        assert.equal(new Set(lgbt.cards.flatMap(card => card.origin_country)).size, 9);
+        assert.ok(lgbt.cards.every(card => card.id !== 900001 && card.source === 'tmdb'));
+        await page.evaluate(() => Lampa.Activity.backward());
+        await page.waitForFunction(() => Lampa.Activity.active().component === 'category');
+
         // Exercise real native persistent cache expiry without a two-hour wall-clock wait.
         revision = 1;
         const beforeRefresh = discover.length;
@@ -198,7 +215,7 @@ async function main() {
         assert.match(refreshed[0], /r0$/, 'popular row remains cached');
         assert.match(refreshed[1], /r1$/, 'recent episodes refresh');
         assert.match(refreshed[2], /r1$/, 'ongoing refresh');
-        assert.match(refreshed[3], /r0$/, 'premieres remain cached for six hours');
+        assert.match(refreshed[3], /r0$/, 'LGBT row remains cached for twelve hours');
 
         offline = true;
         const offlineRows = await page.evaluate(async () => {
@@ -214,11 +231,11 @@ async function main() {
         // Reusing the identical entry after app restart loads newer code, including with
         // GitHub Raw's real text/plain + nosniff response policy.
         offline = false;
-        deliveredVersion = '0.5.2'; // synthetic next release fixture
+        deliveredVersion = '0.6.1'; // synthetic next release fixture
         await page.reload();
         await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
         await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
-            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.5.2');
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.6.1');
         assert.equal(await page.locator(menu).count(), 1);
         assert.equal(codeRequests.length, 2);
         assert.equal(new URL(codeRequests[0]).pathname, new URL(codeRequests[1]).pathname);
@@ -228,13 +245,13 @@ async function main() {
         await page.reload();
         await page.waitForFunction(() => window.appready && window.app_time_launch && window.show_app);
         await page.waitForFunction(() => Lampa.Api.sources.plugin_siaivo_dorama &&
-            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.5.2');
+            Lampa.Api.sources.plugin_siaivo_dorama.__siaivo_dorama_plugin === '0.6.1');
         assert.equal(await page.locator(menu).count(), 1);
         assert.equal(codeRequests.length, 3, 'saved newest code used without requesting older CDN');
 
         assert.deepEqual(errors, [], 'uncaught browser errors');
         assert.deepEqual(warnings, [], 'native rendering/task errors');
-        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, TV details, Back, shared cache, TTL expiry, permanent loader update and offline fallback; fixture TMDB/code data');
+        console.log('OK: Siaivo ' + version + ': menu, rows, full rows, translated titles, More, merged pagination, mixed-country LGBT More, mapped anime exclusion, TV details, Back, shared cache, TTL expiry, permanent loader update and offline fallback; fixture TMDB/code data');
     } finally { await browser.close(); }
 }
 

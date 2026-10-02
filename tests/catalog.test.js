@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { harness } = require('./helpers.cjs');
-const route = 'siaivo-dorama:2026-10-02:kr_new';
+const route = 'siaivo-dorama:2026-10-02:kr_recent_episodes';
 
 function load(h, page = 1, url = route) {
     h.state.run();
@@ -11,7 +11,7 @@ function load(h, page = 1, url = route) {
     h.state.source().list({ url, page }, data => { output = data; }, () => errors++);
     return { output, errors };
 }
-const result = (page, cards, pages = 8) => ({ page, total_pages: pages, total_results: pages * 20, results: cards });
+const result = (page, cards, pages = 8) => ({ page, total_pages: pages, total_results: pages * 20, results: cards.map(card => card && !Array.isArray(card) ? { genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'], ...card } : card) });
 
 test('curated catalog retains fresh zero-vote, daily Soap, and untranslated dramas', () => {
     const h = harness({ catalog: true, respond(call) {
@@ -31,6 +31,8 @@ test('English titles join by ID, preserving local titles, original names, order,
         Object.freeze({ id: 42, name: '새 드라마', original_name: '원본' }),
         Object.freeze({ id: 43, name: 'Українська назва', original_name: '원본' })
     ]), 1));
+    raw.results.forEach(Object.freeze);
+    Object.freeze(raw.results);
     const h = harness({ catalog: true, respond(call) {
         call.ok(call.params.language === 'en-US' ? result(1, [
             { id: 43, name: 'Keep Ukrainian' }, { id: 99, name: 'Unrelated' }, { id: 42, name: 'New Drama' }
@@ -104,7 +106,7 @@ test('invalid catalog responses fail; malformed, adult, and animated cards never
     assert.equal(load(invalid).errors, 1);
     const h = harness({ catalog: true, respond(call) {
         call.ok(result(1, [null, [], {}, { id: 1, name: 'Adult', adult: true },
-            { id: 2, name: 'Anime', genre_ids: [16] }, { id: 4, name: 'Reality', genre_ids: [10764] }, { id: 3, original_name: 'Drama', genre_ids: {} }], 1));
+            { id: 2, name: 'Anime', genre_ids: [16] }, { id: 4, name: 'Reality', genre_ids: [10764] }, { id: 3, original_name: 'Drama' }, { id: 5, name: 'Broken genres', genre_ids: {} }], 1));
     } });
     assert.deepEqual(Array.from(load(h).output.results, c => c.id), [3]);
 });
@@ -115,7 +117,7 @@ test('rows and grid share section TTL, native proxy/key, language and date filte
     let rows;
     h.state.source().category({}, data => { rows = data; }, assert.fail);
     assert.equal(h.state.requests.length, 4);
-    assert.deepEqual(h.state.requests.map(c => c.cache.life), [720, 120, 120, 360]);
+    assert.deepEqual(h.state.requests.map(c => c.cache.life), [720, 120, 120, 720]);
     for (const row of rows) {
         const before = h.state.requests.length;
         h.state.source().list({ url: row.url, page: 1 }, () => {}, assert.fail);

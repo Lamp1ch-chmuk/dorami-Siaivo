@@ -106,7 +106,7 @@ test('empty/failed rows are skipped and remaining rows backfill in order', () =>
     const h = harness({ respond(call, state) {
         if (state.requests.length === 1) return call.error();
         if (state.requests.length === 2) return call.ok({ results: [] });
-        call.ok({ results: [{ id: state.requests.length, name: 'Drama' }] });
+        call.ok({ results: [{ id: state.requests.length, name: 'Drama', genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] });
     }});
     h.state.run();
     let rows;
@@ -133,8 +133,8 @@ test('out-of-order asynchronous completion preserves section order', () => {
     let rows;
     h.state.source().category({}, value => { rows = value; }, assert.fail);
     assert.equal(rows, undefined);
-    pending.slice().reverse().forEach((call, i) => call.ok({ results: [{ id: i + 1 }] }));
-    assert.deepEqual(Array.from(rows, r => r.url.split(':').pop()), ['kr_popular', 'kr_recent_episodes', 'kr_ongoing', 'kr_new']);
+    pending.slice().reverse().forEach((call, i) => call.ok({ results: [{ id: i + 1, genre_ids: [18], first_air_date: '2024-01-01', vote_count: 200, origin_country: ['KR'] }] }));
+    assert.deepEqual(Array.from(rows, r => r.url.split(':').pop()), ['kr_popular', 'kr_recent_episodes', 'kr_ongoing', 'lgbt']);
 });
 
 test('new category visits have independent lazy queues and Seoul-day anchors', () => {
@@ -177,7 +177,7 @@ test('page failures reach the error callback; valid leap-day route is accepted',
 });
 
 test('malformed cards/metadata are sanitized without modifying frozen responses', () => {
-    const card = Object.freeze({ id: 42, source: 'foreign', original_name: 'Drama' });
+    const card = Object.freeze({ id: 42, source: 'foreign', original_name: 'Drama', genre_ids: [18] });
     const raw = Object.freeze({
         results: Object.freeze([null, 'bad', [], {}, { id: -1 }, { id: Infinity }, { id: 1.5 }, { id: true }, { id: 'abc' }, card]),
         total_pages: '9'.repeat(400), total_results: '9'.repeat(400), source: 'tmdb'
