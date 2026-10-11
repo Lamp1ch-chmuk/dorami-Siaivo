@@ -111,8 +111,8 @@ test('empty/failed rows are skipped and remaining rows backfill in order', () =>
     h.state.run();
     let rows;
     h.state.source().category({}, value => { rows = value; }, assert.fail);
-    assert.equal(h.state.requests.length, 7);
-    assert.deepEqual(Array.from(rows, r => r.results[0].id), [3, 4, 5, 6, 7]);
+    assert.equal(h.state.requests.length, 8);
+    assert.deepEqual(Array.from(rows, r => r.results[0].id), [3, 4, 5, 6, 7, 8]);
 });
 
 test('all empty responses or all network failures terminate once', () => {
@@ -122,7 +122,7 @@ test('all empty responses or all network failures terminate once', () => {
         let errors = 0;
         h.state.source().category({}, () => assert.fail('must not load empty rows'), () => errors++);
         assert.equal(errors, 1);
-        assert.equal(h.state.requests.length, 7);
+        assert.equal(h.state.requests.length, 12);
     }
 });
 

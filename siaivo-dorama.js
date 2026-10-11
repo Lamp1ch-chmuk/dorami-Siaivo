@@ -1,6 +1,6 @@
 /*
  * Siaivo Dorama for Lampa 3.x / Siaivo
- * Version: 0.8.0
+ * Version: 0.9.0
  *
  * One left-navigation category: "Дорами".
  * Nothing is injected into the home/main screen.
@@ -13,7 +13,7 @@
  * - rows and grids share bounded, per-section native caching;
  * - untranslated titles use an English page fallback, matched by TMDB id;
  * - TMDB responses are copied before row metadata is changed (do not mutate cache);
- * - dated routes anchor the newest window; country/LGBT catalogs stay unrestricted;
+ * - dated routes anchor newest windows and exclude brand premieres still in the future;
  * - TMDB popularity order reflects user interest, without release-year gates.
  */
 (function () {
@@ -21,7 +21,7 @@
 
     var PLUGIN_ID = 'siaivo_dorama';
     var SOURCE_ID = 'plugin_siaivo_dorama';
-    var VERSION = '0.8.0';
+    var VERSION = '0.9.0';
     var MENU_ACTION = 'plugin_siaivo_dorama';
     var MENU_TITLE = 'Дорами';
     var KOREA_UTC_OFFSET_HOURS = 9;
@@ -168,7 +168,9 @@
         if (options.first_air_date_gte) params['first_air_date.gte'] = options.first_air_date_gte;
         if (options.first_air_date_lte) params['first_air_date.lte'] = options.first_air_date_lte;
         if (options.vote_count_gte !== undefined) params['vote_count.gte'] = options.vote_count_gte;
-        if (options.first_air_date_gte) params.include_null_first_air_dates = 'false';
+        if (options.first_air_date_gte || options.first_air_date_lte) params.include_null_first_air_dates = 'false';
+        if (options.with_companies) params.with_companies = options.with_companies;
+        if (options.with_networks) params.with_networks = options.with_networks;
         if (options.with_keywords) params.with_keywords = options.with_keywords;
         if (options.without_keywords) params.without_keywords = options.without_keywords;
 
@@ -210,7 +212,7 @@
 
     function getSections(anchor) {
         // TMDB calculates popularity from daily user activity plus accumulated interest.
-        // Preserve its order. Only the explicit newest shortlist has date/vote gates.
+        // Preserve its order. Newest has a date/vote window; brands hide future premieres.
         return [
             section('kr_popular', '🇰🇷 Популярні корейські дорами', regional('KR', 'ko')),
             section('cn_popular', '🇨🇳 Популярні китайські дорами', regional('CN', 'zh')),
@@ -224,8 +226,32 @@
             }), 60 * 3),
             section('lgbt', '🏳️‍🌈 ЛГБТ-дорами', regional(DRAMA_COUNTRIES.join('|'), null, {
                 with_keywords: LGBT_KEYWORDS.join('|')
-            }))
+            })),
+            brandSection('studio_dragon', 'Studio Dragon — популярні дорами', anchor, 'KR', 'ko', {
+                with_companies: '86418'
+            }),
+            brandSection('sll', 'SLL / JTBC Studios — популярні дорами', anchor, 'KR', 'ko', {
+                with_companies: '164046|86981'
+            }),
+            brandSection('netflix', 'Netflix — популярні дорами', anchor, NEW_COUNTRIES.join('|'), null, {
+                with_networks: '213'
+            }),
+            brandSection('studio_s', 'Studio S (SBS) — популярні дорами', anchor, 'KR', 'ko', {
+                with_companies: '83914'
+            }),
+            brandSection('disney', 'Disney+ — популярні дорами', anchor, NEW_COUNTRIES.join('|'), null, {
+                with_networks: '2739'
+            })
         ];
+    }
+
+    function brandSection(id, title, anchor, countries, language, options) {
+        // IDs verified with TMDB company/network APIs. OR joins old/new SLL credits.
+        // Studio credits differ from broadcaster/platform credits: do not intersect them.
+        options.first_air_date_lte = dateKey(anchor);
+        var item = section(id, title, regional(countries, language, options), 60 * 3);
+        item.brand_countries = countries.split('|');
+        return item;
     }
 
     function getSection(id, anchor) {
@@ -269,6 +295,12 @@
         if (card.adult === true || card.mal_id || NON_DRAMA_IDS.indexOf(card.id) !== -1) return false;
         if (!Array.isArray(genres) || !genres.some(function (id) { return FICTION_GENRES.indexOf(id) !== -1; })) return false;
         if (EXCLUDED_GENRES.some(function (id) { return genres.indexOf(id) !== -1; })) return false;
+        if (section.brand_countries) {
+            if (!parseDateKey(card.first_air_date) || card.first_air_date > dateKey(anchor)) return false;
+            if (!Array.isArray(card.origin_country) || !card.origin_country.some(function (country) {
+                return section.brand_countries.indexOf(country) !== -1;
+            })) return false;
+        }
         if (section.id === 'new_popular') {
             if (!parseDateKey(card.first_air_date) || card.first_air_date < dateOffsetFrom(anchor, -NEW_DAYS) ||
                 card.first_air_date > dateKey(anchor)) return false;

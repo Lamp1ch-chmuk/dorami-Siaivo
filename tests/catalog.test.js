@@ -139,8 +139,8 @@ test('native catalog path retains lazy ordering and KST date over device midnigh
     let rows;
     const next = h.state.source().category({}, data => { rows = data; }, assert.fail);
     const all = Array.from(rows);
-    while (all.length < 7) next(more => all.push(...more), assert.fail);
-    assert.equal(h.state.requests.length, 7, 'all seven sections remain lazy and reachable');
+    while (all.length < 12) next(more => all.push(...more), assert.fail);
+    assert.equal(h.state.requests.length, 12, 'all twelve sections remain lazy and reachable');
     assert.equal(h.state.requests[4].cache.life, 360);
     assert.equal(h.state.requests[5].cache.life, 180);
     assert.ok(all.every(row => row.source === 'plugin_siaivo_dorama' && row.results[0].source === 'tmdb'));
